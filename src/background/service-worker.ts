@@ -189,6 +189,11 @@ async function triggerFlowDownload(
     if (buttonResult.downloadClickPoint) {
       return clickActiveFlowTabAt(buttonResult.downloadClickPoint);
     }
+    if (buttonResult.menuClickPoint) {
+      const menuResult = await clickActiveFlowTabAt(buttonResult.menuClickPoint);
+      if (!menuResult.ok) return menuResult;
+      await sleep(700);
+    }
     await sleep(700);
   }
 

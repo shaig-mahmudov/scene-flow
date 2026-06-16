@@ -2,6 +2,7 @@ import {
   findDownloadButtonNearNewestMedia,
   findGenerateButton,
   findGeneratedMediaElements,
+  findOverflowMenuButtonNearNewestMedia,
   findPromptInput,
   findResultCards,
   setPromptText
@@ -94,12 +95,14 @@ function getDownloadButton(
   message: Extract<ExtensionMessage, { type: "GET_DOWNLOAD_BUTTON" }>
 ): ContentAutomationResult {
   const button = findDownloadButtonNearNewestMedia();
+  const menuButton = button ? null : findOverflowMenuButtonNearNewestMedia();
   return {
     ok: true,
     itemId: message.item.id,
     ready: Boolean(button),
     hasDownloadButton: Boolean(button),
-    downloadClickPoint: button ? getElementCenter(button) : undefined
+    downloadClickPoint: button ? getElementCenter(button) : undefined,
+    menuClickPoint: menuButton ? getElementCenter(menuButton) : undefined
   };
 }
 

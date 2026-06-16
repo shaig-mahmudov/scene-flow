@@ -104,6 +104,34 @@ export function findDownloadButtonNearNewestMedia(): HTMLElement | null {
   return findDownloadButtonForNewestResult();
 }
 
+export function findOverflowMenuButtonNearNewestMedia(): HTMLElement | null {
+  const media = findNewestGeneratedMediaElement();
+  if (!media) return null;
+
+  const mediaRect = media.getBoundingClientRect();
+  let parent = media.parentElement;
+  for (let depth = 0; parent && depth < 8; depth += 1) {
+    const parentRect = parent.getBoundingClientRect();
+    const isLikelyMediaCard =
+      parentRect.width >= mediaRect.width &&
+      parentRect.height >= mediaRect.height &&
+      parentRect.width <= mediaRect.width + 260 &&
+      parentRect.height <= mediaRect.height + 260;
+
+    if (isLikelyMediaCard) {
+      const menuButton = visibleElements(parent.querySelectorAll<HTMLElement>('button, [role="button"]'))
+        .filter((button) => isPossibleOverflowMenuButton(button, mediaRect, parentRect))
+        .sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right)[0];
+
+      if (menuButton) return menuButton;
+    }
+
+    parent = parent.parentElement;
+  }
+
+  return null;
+}
+
 export function setPromptText(input: HTMLElement, prompt: string): void {
   input.focus();
 
@@ -243,6 +271,25 @@ function findDownloadButtonIn(root: ParentNode): HTMLElement | null {
       return /download|save/i.test(`${label} ${title} ${text} ${href}`);
     }) ?? null
   );
+}
+
+function isPossibleOverflowMenuButton(button: HTMLElement, mediaRect: DOMRect, parentRect: DOMRect): boolean {
+  const label = button.getAttribute("aria-label") ?? "";
+  const title = button.getAttribute("title") ?? "";
+  const text = button.textContent?.trim() ?? "";
+  const combined = `${label} ${title} ${text}`;
+  const rect = button.getBoundingClientRect();
+
+  if (isDisabled(button)) return false;
+  if (/download|save|back|project|home|trash|delete|remove|close/i.test(combined)) return false;
+
+  const compact = rect.width <= 64 && rect.height <= 64;
+  const inCard = rect.left >= parentRect.left && rect.right <= parentRect.right && rect.top >= parentRect.top && rect.bottom <= parentRect.bottom;
+  const nearMediaTopRight = rect.right > mediaRect.right - 120 && rect.top < mediaRect.top + 100;
+  const labelledAsMenu = /more|option|menu|action|overflow/i.test(combined) || /⋮|…|\.\.\./.test(text);
+  const hasMenuPopup = button.getAttribute("aria-haspopup") === "menu" || button.getAttribute("aria-expanded") !== null;
+
+  return compact && inCard && nearMediaTopRight && (labelledAsMenu || hasMenuPopup || text.length === 0);
 }
 
 function isInsideNavigation(element: HTMLElement): boolean {

@@ -9,6 +9,7 @@ export type ContentAutomationResult =
       clickPoint?: ViewportClickPoint;
       revealPoint?: ViewportClickPoint;
       downloadClickPoint?: ViewportClickPoint;
+      menuClickPoint?: ViewportClickPoint;
     }
   | { ok: false; itemId?: string; error: string };
 
