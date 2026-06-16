@@ -18,16 +18,22 @@ function buttonByTextOrLabel(pattern: RegExp): HTMLElement | null {
 }
 
 export function findPromptInput(): HTMLElement | null {
+  const textControls = visibleElements(
+    document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('textarea, input[type="text"], input:not([type])')
+  ).filter(isPromptLikeTextControl);
+  const bottomTextControl = textControls.sort(
+    (a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom
+  )[0];
+  if (bottomTextControl) return bottomTextControl;
+
   const labelled = document.querySelector<HTMLElement>(
     '[aria-label*="prompt" i], [aria-label*="describe" i]'
   );
-  if (labelled && isEditableInput(labelled)) return labelled;
+  if (labelled && isEditableInput(labelled) && isInComposerArea(labelled)) return labelled;
 
-  return (
-    visibleElements(document.querySelectorAll<HTMLTextAreaElement>("textarea"))[0] ??
-    visibleElements(document.querySelectorAll<HTMLElement>('[contenteditable="true"]'))[0] ??
-    null
-  );
+  return visibleElements(document.querySelectorAll<HTMLElement>('[contenteditable="true"]'))
+    .filter(isInComposerArea)
+    .sort((a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom)[0] ?? null;
 }
 
 export function findGenerateButton(promptInput?: HTMLElement): HTMLElement | null {
@@ -73,7 +79,7 @@ export function setPromptText(input: HTMLElement, prompt: string): void {
     return;
   }
 
-  insertContentEditableText(input, prompt);
+  dispatchPasteEvents(input, prompt);
   dispatchTextEvents(input, prompt);
 }
 
@@ -83,6 +89,31 @@ function isEditableInput(element: HTMLElement): boolean {
     element instanceof HTMLInputElement ||
     element.isContentEditable
   );
+}
+
+function isPromptLikeTextControl(input: HTMLInputElement | HTMLTextAreaElement): boolean {
+  const combined = [
+    input.placeholder,
+    input.getAttribute("aria-label"),
+    input.getAttribute("name"),
+    input.getAttribute("data-testid")
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const rejects = /search|filter|title|name|email|password|url/i.test(combined);
+  const accepts =
+    /prompt|describe|create|want|message/i.test(combined) ||
+    input instanceof HTMLTextAreaElement ||
+    isInComposerArea(input);
+
+  return accepts && !rejects && isInComposerArea(input);
+}
+
+function isInComposerArea(element: HTMLElement): boolean {
+  const rect = element.getBoundingClientRect();
+  if (rect.width < 120 || rect.height < 12) return false;
+  return rect.bottom > window.innerHeight * 0.55;
 }
 
 function findNearbyPromptButton(promptInput?: HTMLElement): HTMLElement | null {
@@ -126,19 +157,17 @@ function dispatchTextEvents(input: HTMLElement, prompt: string): void {
   input.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-function insertContentEditableText(input: HTMLElement, prompt: string): void {
-  input.focus();
+function dispatchPasteEvents(input: HTMLElement, prompt: string): void {
+  const clipboardData = new DataTransfer();
+  clipboardData.setData("text/plain", prompt);
 
-  const selection = window.getSelection();
-  const range = document.createRange();
-  range.selectNodeContents(input);
-  selection?.removeAllRanges();
-  selection?.addRange(range);
-
-  const inserted = document.execCommand("insertText", false, prompt);
-  if (!inserted) {
-    input.textContent = prompt;
-  }
+  input.dispatchEvent(
+    new ClipboardEvent("paste", {
+      bubbles: true,
+      cancelable: true,
+      clipboardData
+    })
+  );
 }
 
 function isPossibleSubmitButton(button: HTMLElement, inputRect: DOMRect, inputCenterY: number): boolean {
