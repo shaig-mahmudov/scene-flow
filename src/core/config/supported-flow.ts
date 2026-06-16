@@ -17,6 +17,21 @@ export function isSupportedFlowUrl(url: string | undefined): boolean {
   }
 }
 
+export function isRunnableFlowProjectUrl(url: string | undefined): boolean {
+  if (!url) return false;
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.origin === "https://labs.google") {
+      return parsed.pathname.startsWith("/fx/tools/flow/project/");
+    }
+
+    return parsed.origin === "https://flow.google.com";
+  } catch {
+    return false;
+  }
+}
+
 export function supportedFlowUrlMessage(): string {
-  return "Open Google Flow in the active tab before starting the queue. Supported URLs: flow.google.com or labs.google/fx/tools/flow.";
+  return "Open a specific Google Flow project in the active tab before starting the queue.";
 }

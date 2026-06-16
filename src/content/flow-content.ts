@@ -41,12 +41,12 @@ async function submitPrompt(message: Extract<ExtensionMessage, { type: "SUBMIT_P
   return { ok: true, itemId: message.item.id };
 }
 
-async function waitForGenerateButton(input: HTMLElement): Promise<HTMLButtonElement> {
+async function waitForGenerateButton(input: HTMLElement): Promise<HTMLElement> {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < 3000) {
     const button = findGenerateButton(input);
-    if (button && !button.disabled && button.getAttribute("aria-disabled") !== "true") {
+    if (button && button.getAttribute("aria-disabled") !== "true") {
       return button;
     }
     await new Promise((resolve) => window.setTimeout(resolve, 100));
@@ -54,7 +54,7 @@ async function waitForGenerateButton(input: HTMLElement): Promise<HTMLButtonElem
 
   const button = findGenerateButton(input);
   if (!button) throw new Error("Could not find the Generate button.");
-  throw new Error("Generate button is disabled after setting the prompt.");
+  throw new Error("Could not find an enabled composer send button after setting the prompt.");
 }
 
 function checkResultReady(
@@ -83,7 +83,7 @@ function closeOpenOverlay(): void {
   document.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Escape", code: "Escape" }));
 }
 
-function clickLikeUser(button: HTMLButtonElement): void {
+function clickLikeUser(button: HTMLElement): void {
   button.scrollIntoView({ block: "center", inline: "center" });
   button.focus();
 

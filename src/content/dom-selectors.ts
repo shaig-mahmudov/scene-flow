@@ -6,8 +6,8 @@ function visibleElements<T extends HTMLElement>(elements: Iterable<T>): T[] {
   });
 }
 
-function buttonByTextOrLabel(pattern: RegExp): HTMLButtonElement | null {
-  const buttons = visibleElements(document.querySelectorAll<HTMLButtonElement>("button"));
+function buttonByTextOrLabel(pattern: RegExp): HTMLElement | null {
+  const buttons = visibleElements(document.querySelectorAll<HTMLElement>('button, [role="button"]'));
   return (
     buttons.find((button) => {
       const label = button.getAttribute("aria-label") ?? "";
@@ -30,17 +30,8 @@ export function findPromptInput(): HTMLElement | null {
   );
 }
 
-export function findGenerateButton(promptInput?: HTMLElement): HTMLButtonElement | null {
-  const labelledButton = buttonByTextOrLabel(/generate|create|submit|send|arrow/i);
-  if (labelledButton) return labelledButton;
-
-  const formButton = promptInput?.closest("form")?.querySelector<HTMLButtonElement>('button[type="submit"]');
-  if (formButton) return formButton;
-
-  const nearbyButton = findNearbyPromptButton(promptInput);
-  if (nearbyButton) return nearbyButton;
-
-  return document.querySelector<HTMLButtonElement>('button[type="submit"]');
+export function findGenerateButton(promptInput?: HTMLElement): HTMLElement | null {
+  return findNearbyPromptButton(promptInput);
 }
 
 export function findResultCards(): HTMLElement[] {
@@ -58,19 +49,19 @@ export function findLoadingIndicators(): HTMLElement[] {
   );
 }
 
-export function findDownloadButtonForNewestResult(): HTMLButtonElement | null {
+export function findDownloadButtonForNewestResult(): HTMLElement | null {
   const cards = findResultCards();
   for (const card of cards.slice().reverse()) {
-    const button = [...card.querySelectorAll<HTMLButtonElement>("button")].find((candidate) => {
+    const button = [...card.querySelectorAll<HTMLElement>('button, [role="button"]')].find((candidate) => {
       const label = candidate.getAttribute("aria-label") ?? "";
       const text = candidate.textContent ?? "";
       return /download|save/i.test(label) || /download|save/i.test(text);
     });
-    if (button && !button.disabled) return button;
+    if (button && !isDisabled(button)) return button;
   }
 
   const fallback = buttonByTextOrLabel(/download|save/i);
-  return fallback && !fallback.disabled ? fallback : null;
+  return fallback && !isDisabled(fallback) ? fallback : null;
 }
 
 export function setPromptText(input: HTMLElement, prompt: string): void {
@@ -94,21 +85,23 @@ function isEditableInput(element: HTMLElement): boolean {
   );
 }
 
-function findNearbyPromptButton(promptInput?: HTMLElement): HTMLButtonElement | null {
+function findNearbyPromptButton(promptInput?: HTMLElement): HTMLElement | null {
   if (!promptInput) return null;
 
   let parent = promptInput.parentElement;
   for (let depth = 0; parent && depth < 8; depth += 1) {
     const parentRect = parent.getBoundingClientRect();
     const inputRect = promptInput.getBoundingClientRect();
+    const inputCenterY = inputRect.top + inputRect.height / 2;
     const looksLikeComposer =
       parentRect.width >= inputRect.width &&
       parentRect.width <= Math.max(inputRect.width + 900, 320) &&
-      Math.abs(parentRect.bottom - inputRect.bottom) < 160;
+      Math.abs(parentRect.bottom - inputRect.bottom) < 160 &&
+      parentRect.bottom > window.innerHeight * 0.45;
 
     if (looksLikeComposer) {
-      const buttons = visibleElements(parent.querySelectorAll<HTMLButtonElement>("button"))
-        .filter(isPossibleSubmitButton)
+      const buttons = visibleElements(parent.querySelectorAll<HTMLElement>('button, [role="button"]'))
+        .filter((button) => isPossibleSubmitButton(button, inputRect, inputCenterY))
         .sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right);
 
       if (buttons.length > 0) return buttons[0] ?? null;
@@ -148,18 +141,31 @@ function insertContentEditableText(input: HTMLElement, prompt: string): void {
   }
 }
 
-function isPossibleSubmitButton(button: HTMLButtonElement): boolean {
+function isPossibleSubmitButton(button: HTMLElement, inputRect: DOMRect, inputCenterY: number): boolean {
   const label = button.getAttribute("aria-label") ?? "";
   const title = button.getAttribute("title") ?? "";
   const text = button.textContent?.trim() ?? "";
   const combined = `${label} ${title} ${text}`;
+  const rect = button.getBoundingClientRect();
+  const centerY = rect.top + rect.height / 2;
 
-  if (button.disabled || button.getAttribute("aria-disabled") === "true") return false;
-  if (/add|upload|media|attach|agent|settings|filter|tune|menu|back|collapse|trash|voice|mic/i.test(combined)) {
+  if (isDisabled(button)) return false;
+  if (/add|upload|media|attach|agent|settings|filter|tune|menu|back|project|home|collapse|trash|voice|mic/i.test(combined)) {
     return false;
   }
   if (text === "+" || text.toLowerCase() === "agent") return false;
 
-  const rect = button.getBoundingClientRect();
-  return rect.width <= 96 && rect.height <= 96;
+  const verticallyAligned = Math.abs(centerY - inputCenterY) < Math.max(inputRect.height, 80);
+  const toRightOfPrompt = rect.left > inputRect.left + Math.min(160, inputRect.width * 0.35);
+  const compactAction = rect.width <= 96 && rect.height <= 96;
+
+  return verticallyAligned && toRightOfPrompt && compactAction;
+}
+
+function isDisabled(element: HTMLElement): boolean {
+  return (
+    (element instanceof HTMLButtonElement && element.disabled) ||
+    element.getAttribute("aria-disabled") === "true" ||
+    element.getAttribute("disabled") !== null
+  );
 }

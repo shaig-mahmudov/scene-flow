@@ -1,5 +1,5 @@
 import { DEFAULT_SETTINGS } from "../core/config/defaults";
-import { isSupportedFlowUrl, supportedFlowUrlMessage } from "../core/config/supported-flow";
+import { isRunnableFlowProjectUrl, supportedFlowUrlMessage } from "../core/config/supported-flow";
 import type { ContentAutomationResult, ExtensionMessage } from "../core/messaging/messages";
 import {
   loadQueue,
@@ -205,7 +205,7 @@ async function cancelRemaining(): Promise<void> {
 
 async function sendToActiveFlowTab(message: ExtensionMessage): Promise<ContentAutomationResult> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id || !isSupportedFlowUrl(tab.url)) {
+  if (!tab?.id || !isRunnableFlowProjectUrl(tab.url)) {
     return { ok: false, error: supportedFlowUrlMessage() };
   }
 

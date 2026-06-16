@@ -1,6 +1,6 @@
 import { findDownloadButtonForNewestResult, findLoadingIndicators, findResultCards } from "./dom-selectors";
 
-export function getReadyDownloadButton(initialResultCount: number): HTMLButtonElement | null {
+export function getReadyDownloadButton(initialResultCount: number): HTMLElement | null {
   const resultCount = findResultCards().length;
   const hasNewResult = resultCount > initialResultCount || resultCount > 0;
   const loading = findLoadingIndicators().length > 0;
@@ -12,7 +12,7 @@ export function getReadyDownloadButton(initialResultCount: number): HTMLButtonEl
 export async function waitForReadyResult(options: {
   initialResultCount: number;
   timeoutMs: number;
-}): Promise<HTMLButtonElement> {
+}): Promise<HTMLElement> {
   const startedAt = Date.now();
 
   return new Promise((resolve, reject) => {
