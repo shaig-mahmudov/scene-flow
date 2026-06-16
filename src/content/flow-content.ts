@@ -1,6 +1,8 @@
 import { findGenerateButton, findPromptInput, findResultCards, setPromptText } from "./dom-selectors";
-import { waitForReadyResult } from "./result-watcher";
+import { getReadyDownloadButton, waitForReadyResult } from "./result-watcher";
 import type { ContentAutomationResult, ExtensionMessage } from "../core/messaging/messages";
+
+let activeSubmission: { itemId: string; initialResultCount: number } | undefined;
 
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
   if (message.type === "SUBMIT_PROMPT") {
@@ -8,6 +10,11 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
       .then(sendResponse)
       .catch((error: unknown) => sendResponse(toFailure(error, message.item.id)));
     return true;
+  }
+
+  if (message.type === "CHECK_RESULT_READY") {
+    sendResponse(checkResultReady(message));
+    return false;
   }
 
   if (message.type === "TRIGGER_DOWNLOAD") {
@@ -28,8 +35,8 @@ async function submitPrompt(message: Extract<ExtensionMessage, { type: "SUBMIT_P
   const initialResultCount = findResultCards().length;
   const button = await waitForGenerateButton(input);
   button.click();
+  activeSubmission = { itemId: message.item.id, initialResultCount };
 
-  await waitForReadyResult({ initialResultCount, timeoutMs: message.maxWaitMs });
   return { ok: true, itemId: message.item.id };
 }
 
@@ -49,10 +56,23 @@ async function waitForGenerateButton(input: HTMLElement): Promise<HTMLButtonElem
   throw new Error("Generate button is disabled after setting the prompt.");
 }
 
+function checkResultReady(
+  message: Extract<ExtensionMessage, { type: "CHECK_RESULT_READY" }>
+): ContentAutomationResult {
+  const initialResultCount =
+    activeSubmission?.itemId === message.item.id ? activeSubmission.initialResultCount : 0;
+  const button = getReadyDownloadButton(initialResultCount);
+  return { ok: true, itemId: message.item.id, ready: Boolean(button) };
+}
+
 async function triggerDownload(
   message: Extract<ExtensionMessage, { type: "TRIGGER_DOWNLOAD" }>
 ): Promise<ContentAutomationResult> {
-  const button = await waitForReadyResult({ initialResultCount: 0, timeoutMs: message.maxWaitMs });
+  const initialResultCount =
+    activeSubmission?.itemId === message.item.id ? activeSubmission.initialResultCount : 0;
+  const button =
+    getReadyDownloadButton(initialResultCount) ??
+    (await waitForReadyResult({ initialResultCount, timeoutMs: Math.min(message.maxWaitMs, 5000) }));
   button.click();
   return { ok: true, itemId: message.item.id };
 }

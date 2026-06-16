@@ -1,7 +1,7 @@
 import type { QueueItem, RunnerState, SceneFlowSettings } from "../queue/queue-types";
 
 export type ContentAutomationResult =
-  | { ok: true; itemId: string }
+  | { ok: true; itemId: string; ready?: boolean }
   | { ok: false; itemId?: string; error: string };
 
 export type ExtensionMessage =
@@ -14,6 +14,7 @@ export type ExtensionMessage =
   | { type: "QUEUE_RETRY_FAILED" }
   | { type: "QUEUE_STATE"; items: QueueItem[]; runnerState: RunnerState; settings: SceneFlowSettings }
   | { type: "SUBMIT_PROMPT"; item: QueueItem; maxWaitMs: number }
+  | { type: "CHECK_RESULT_READY"; item: QueueItem }
   | { type: "TRIGGER_DOWNLOAD"; item: QueueItem; maxWaitMs: number }
   | { type: "PROMPT_SUBMITTED"; itemId: string }
   | { type: "RESULT_READY"; itemId: string }

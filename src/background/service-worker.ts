@@ -124,6 +124,13 @@ async function processItem(item: QueueItem): Promise<void> {
     return;
   }
 
+  await patchQueueItem(item.id, (current) => updateItemStatus(current, "waiting_result"));
+  const readyResult = await waitForResultReady(item, maxWaitMs);
+  if (!readyResult.ok) {
+    await handleFailure(item.id, readyResult.error);
+    return;
+  }
+
   await patchQueueItem(item.id, (current) => updateItemStatus(current, "downloading"));
   const currentItem = (await loadQueue()).find((candidate) => candidate.id === item.id);
   if (currentItem) await setCurrentItem(currentItem);
@@ -150,6 +157,23 @@ async function processItem(item: QueueItem): Promise<void> {
   }
 
   await patchQueueItem(item.id, (current) => updateItemStatus(current, "done"));
+}
+
+async function waitForResultReady(item: QueueItem, maxWaitMs: number): Promise<ContentAutomationResult> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < maxWaitMs) {
+    const state = await loadRunnerState();
+    if (state.stopRequested) return { ok: false, itemId: item.id, error: "Queue was stopped while waiting for the result." };
+
+    const result = await sendToActiveFlowTab({ type: "CHECK_RESULT_READY", item });
+    if (!result.ok) return result;
+    if (result.ready) return { ok: true, itemId: item.id };
+
+    await sleep(1500);
+  }
+
+  return { ok: false, itemId: item.id, error: "Timed out waiting for a ready result." };
 }
 
 async function handleFailure(itemId: string, error: string): Promise<void> {
@@ -185,7 +209,14 @@ async function sendToActiveFlowTab(message: ExtensionMessage): Promise<ContentAu
     return { ok: false, error: supportedFlowUrlMessage() };
   }
 
-  return chrome.tabs.sendMessage(tab.id, message);
+  try {
+    return await chrome.tabs.sendMessage(tab.id, message);
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Could not communicate with the Google Flow page."
+    };
+  }
 }
 
 function runningState(activeItemId: string): RunnerState {

@@ -1,5 +1,14 @@
 import { findDownloadButtonForNewestResult, findLoadingIndicators, findResultCards } from "./dom-selectors";
 
+export function getReadyDownloadButton(initialResultCount: number): HTMLButtonElement | null {
+  const resultCount = findResultCards().length;
+  const hasNewResult = resultCount > initialResultCount || resultCount > 0;
+  const loading = findLoadingIndicators().length > 0;
+  const downloadButton = findDownloadButtonForNewestResult();
+
+  return hasNewResult && !loading && downloadButton ? downloadButton : null;
+}
+
 export async function waitForReadyResult(options: {
   initialResultCount: number;
   timeoutMs: number;
@@ -14,12 +23,9 @@ export async function waitForReadyResult(options: {
         return;
       }
 
-      const resultCount = findResultCards().length;
-      const hasNewResult = resultCount > options.initialResultCount || resultCount > 0;
-      const loading = findLoadingIndicators().length > 0;
-      const downloadButton = findDownloadButtonForNewestResult();
+      const downloadButton = getReadyDownloadButton(options.initialResultCount);
 
-      if (hasNewResult && !loading && downloadButton) {
+      if (downloadButton) {
         window.setTimeout(() => {
           observer.disconnect();
           resolve(downloadButton);

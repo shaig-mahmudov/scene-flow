@@ -80,9 +80,18 @@ async function persistSettingsFromForm(): Promise<SceneFlowSettings> {
 async function sendControl(
   type: "QUEUE_START" | "QUEUE_PAUSE" | "QUEUE_RESUME" | "QUEUE_STOP" | "QUEUE_RESET" | "QUEUE_RETRY_FAILED"
 ): Promise<void> {
-  await persistSettingsFromForm();
-  await chrome.runtime.sendMessage({ type });
-  await renderState();
+  try {
+    await persistSettingsFromForm();
+    const response = (await chrome.runtime.sendMessage({ type })) as { ok?: boolean; error?: string } | undefined;
+    if (response?.ok === false) {
+      showMessage(response.error ?? "The command could not be completed.", true);
+    } else {
+      showMessage(commandMessage(type));
+    }
+    await renderState();
+  } catch (error) {
+    showMessage(error instanceof Error ? error.message : "Could not send command to the extension.", true);
+  }
 }
 
 async function renderState(): Promise<void> {
@@ -136,6 +145,25 @@ function showMessage(message: string, isError = false): void {
 
 function formatStatus(status: string): string {
   return status.replaceAll("_", " ").replace(/^\w/, (letter) => letter.toUpperCase());
+}
+
+function commandMessage(type: string): string {
+  switch (type) {
+    case "QUEUE_START":
+      return "Queue started.";
+    case "QUEUE_PAUSE":
+      return "Pause requested.";
+    case "QUEUE_RESUME":
+      return "Queue resumed.";
+    case "QUEUE_STOP":
+      return "Stop requested.";
+    case "QUEUE_RESET":
+      return "Queue reset.";
+    case "QUEUE_RETRY_FAILED":
+      return "Failed items are pending again.";
+    default:
+      return "Command sent.";
+  }
 }
 
 function clampNumber(value: number, min: number, max: number, fallback: number): number {
