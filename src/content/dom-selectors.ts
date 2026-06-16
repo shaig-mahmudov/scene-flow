@@ -61,6 +61,16 @@ export function findGeneratedMediaElements(): HTMLElement[] {
   });
 }
 
+export function findNewestGeneratedMediaElement(): HTMLElement | null {
+  return (
+    findGeneratedMediaElements().sort((a, b) => {
+      const aRect = a.getBoundingClientRect();
+      const bRect = b.getBoundingClientRect();
+      return bRect.right + bRect.bottom - (aRect.right + aRect.bottom);
+    })[0] ?? null
+  );
+}
+
 export function findLoadingIndicators(): HTMLElement[] {
   return visibleElements(
     document.querySelectorAll<HTMLElement>(
@@ -72,16 +82,26 @@ export function findLoadingIndicators(): HTMLElement[] {
 export function findDownloadButtonForNewestResult(): HTMLElement | null {
   const cards = findResultCards();
   for (const card of cards.slice().reverse()) {
-    const button = [...card.querySelectorAll<HTMLElement>('button, [role="button"]')].find((candidate) => {
-      const label = candidate.getAttribute("aria-label") ?? "";
-      const text = candidate.textContent ?? "";
-      return /download|save/i.test(label) || /download|save/i.test(text);
-    });
+    const button = findDownloadButtonIn(card);
     if (button && !isDisabled(button)) return button;
   }
 
   const fallback = buttonByTextOrLabel(/download|save/i);
   return fallback && !isDisabled(fallback) ? fallback : null;
+}
+
+export function findDownloadButtonNearNewestMedia(): HTMLElement | null {
+  const media = findNewestGeneratedMediaElement();
+  if (!media) return findDownloadButtonForNewestResult();
+
+  let parent = media.parentElement;
+  for (let depth = 0; parent && depth < 8; depth += 1) {
+    const button = findDownloadButtonIn(parent);
+    if (button && !isDisabled(button)) return button;
+    parent = parent.parentElement;
+  }
+
+  return findDownloadButtonForNewestResult();
 }
 
 export function setPromptText(input: HTMLElement, prompt: string): void {
@@ -210,6 +230,18 @@ function isDisabled(element: HTMLElement): boolean {
     (element instanceof HTMLButtonElement && element.disabled) ||
     element.getAttribute("aria-disabled") === "true" ||
     element.getAttribute("disabled") !== null
+  );
+}
+
+function findDownloadButtonIn(root: ParentNode): HTMLElement | null {
+  return (
+    [...root.querySelectorAll<HTMLElement>('button, [role="button"], a[download], a[href]')].find((candidate) => {
+      const label = candidate.getAttribute("aria-label") ?? "";
+      const title = candidate.getAttribute("title") ?? "";
+      const href = candidate.getAttribute("href") ?? "";
+      const text = candidate.textContent ?? "";
+      return /download|save/i.test(`${label} ${title} ${text} ${href}`);
+    }) ?? null
   );
 }
 

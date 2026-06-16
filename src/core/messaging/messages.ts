@@ -7,6 +7,8 @@ export type ContentAutomationResult =
       ready?: boolean;
       hasDownloadButton?: boolean;
       clickPoint?: ViewportClickPoint;
+      revealPoint?: ViewportClickPoint;
+      downloadClickPoint?: ViewportClickPoint;
     }
   | { ok: false; itemId?: string; error: string };
 
@@ -26,6 +28,7 @@ export type ExtensionMessage =
   | { type: "QUEUE_STATE"; items: QueueItem[]; runnerState: RunnerState; settings: SceneFlowSettings }
   | { type: "SUBMIT_PROMPT"; item: QueueItem; maxWaitMs: number }
   | { type: "CHECK_RESULT_READY"; item: QueueItem }
+  | { type: "GET_DOWNLOAD_BUTTON"; item: QueueItem }
   | { type: "TRIGGER_DOWNLOAD"; item: QueueItem; maxWaitMs: number }
   | { type: "PROMPT_SUBMITTED"; itemId: string }
   | { type: "RESULT_READY"; itemId: string }

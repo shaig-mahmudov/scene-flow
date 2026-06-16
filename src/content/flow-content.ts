@@ -1,4 +1,5 @@
 import {
+  findDownloadButtonNearNewestMedia,
   findGenerateButton,
   findGeneratedMediaElements,
   findPromptInput,
@@ -22,6 +23,11 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
 
   if (message.type === "CHECK_RESULT_READY") {
     sendResponse(checkResultReady(message));
+    return false;
+  }
+
+  if (message.type === "GET_DOWNLOAD_BUTTON") {
+    sendResponse(getDownloadButton(message));
     return false;
   }
 
@@ -78,7 +84,22 @@ function checkResultReady(
     ok: true,
     itemId: message.item.id,
     ready: readiness.ready,
-    hasDownloadButton: readiness.hasDownloadButton
+    hasDownloadButton: readiness.hasDownloadButton,
+    downloadClickPoint: readiness.downloadButton ? getElementCenter(readiness.downloadButton) : undefined,
+    revealPoint: readiness.revealTarget ? getElementCenter(readiness.revealTarget) : undefined
+  };
+}
+
+function getDownloadButton(
+  message: Extract<ExtensionMessage, { type: "GET_DOWNLOAD_BUTTON" }>
+): ContentAutomationResult {
+  const button = findDownloadButtonNearNewestMedia();
+  return {
+    ok: true,
+    itemId: message.item.id,
+    ready: Boolean(button),
+    hasDownloadButton: Boolean(button),
+    downloadClickPoint: button ? getElementCenter(button) : undefined
   };
 }
 
@@ -92,6 +113,9 @@ async function triggerDownload(
   const submittedAt = activeSubmission?.itemId === message.item.id ? activeSubmission.submittedAt : Date.now();
   const readiness = getResultReadiness({ initialResultCount, initialMediaCount, submittedAt });
   if (!readiness.hasDownloadButton) {
+    const button = findDownloadButtonNearNewestMedia();
+    if (!button) return { ok: false, itemId: message.item.id, error: "Could not find a Flow download button." };
+    clickLikeUser(button);
     return { ok: true, itemId: message.item.id };
   }
 

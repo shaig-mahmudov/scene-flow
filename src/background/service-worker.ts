@@ -141,17 +141,15 @@ async function processItem(item: QueueItem): Promise<void> {
     return;
   }
 
-  if (readyResult.hasDownloadButton) {
-    await patchQueueItem(item.id, (current) => updateItemStatus(current, "downloading"));
-    const currentItem = (await loadQueue()).find((candidate) => candidate.id === item.id);
-    if (currentItem) await setCurrentItem(currentItem);
+  await patchQueueItem(item.id, (current) => updateItemStatus(current, "downloading"));
+  const currentItem = (await loadQueue()).find((candidate) => candidate.id === item.id);
+  if (currentItem) await setCurrentItem(currentItem);
 
-    const downloadResult = await sendToActiveFlowTab({ type: "TRIGGER_DOWNLOAD", item, maxWaitMs });
-    if (!downloadResult.ok) {
-      await setCurrentItem(null);
-      await handleFailure(item.id, downloadResult.error);
-      return;
-    }
+  const downloadResult = await triggerFlowDownload(item, readyResult);
+  if (!downloadResult.ok) {
+    await setCurrentItem(null);
+    await handleFailure(item.id, downloadResult.error);
+    return;
   }
 
   await patchQueueItem(item.id, (current) => updateItemStatus(current, "cooldown"));
@@ -171,6 +169,36 @@ async function processItem(item: QueueItem): Promise<void> {
   await patchQueueItem(item.id, (current) => updateItemStatus(current, "done"));
 }
 
+async function triggerFlowDownload(
+  item: QueueItem,
+  readyResult: Extract<ContentAutomationResult, { ok: true }>
+): Promise<ContentAutomationResult> {
+  if (readyResult.downloadClickPoint) {
+    return clickActiveFlowTabAt(readyResult.downloadClickPoint);
+  }
+
+  if (readyResult.revealPoint) {
+    const hoverResult = await hoverActiveFlowTabAt(readyResult.revealPoint);
+    if (!hoverResult.ok) return hoverResult;
+    await sleep(700);
+  }
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const buttonResult = await sendToActiveFlowTab({ type: "GET_DOWNLOAD_BUTTON", item });
+    if (!buttonResult.ok) return buttonResult;
+    if (buttonResult.downloadClickPoint) {
+      return clickActiveFlowTabAt(buttonResult.downloadClickPoint);
+    }
+    await sleep(700);
+  }
+
+  return {
+    ok: false,
+    error:
+      "Generated media was detected, but Scene Flow could not find a visible download button. Open the result card once and try again."
+  };
+}
+
 async function waitForResultReady(item: QueueItem, maxWaitMs: number): Promise<ContentAutomationResult> {
   const startedAt = Date.now();
 
@@ -181,7 +209,13 @@ async function waitForResultReady(item: QueueItem, maxWaitMs: number): Promise<C
     const result = await sendToActiveFlowTab({ type: "CHECK_RESULT_READY", item });
     if (!result.ok) return result;
     if (result.ready) {
-      return { ok: true, itemId: item.id, hasDownloadButton: result.hasDownloadButton };
+      return {
+        ok: true,
+        itemId: item.id,
+        hasDownloadButton: result.hasDownloadButton,
+        downloadClickPoint: result.downloadClickPoint,
+        revealPoint: result.revealPoint
+      };
     }
 
     await sleep(1500);
@@ -277,6 +311,38 @@ async function clickActiveFlowTabAt(point: { x: number; y: number }): Promise<Co
       await chrome.debugger.detach(target);
     } catch {
       // Detach can fail if attach did not complete; the click result above is the useful error.
+    }
+  }
+}
+
+async function hoverActiveFlowTabAt(point: { x: number; y: number }): Promise<ContentAutomationResult> {
+  const tab = await getActiveFlowTab();
+  if (!tab?.id || !isRunnableFlowProjectUrl(tab.url)) {
+    return { ok: false, error: supportedFlowUrlMessage() };
+  }
+
+  const target: chrome.debugger.Debuggee = { tabId: tab.id };
+  try {
+    await chrome.debugger.attach(target, "1.3");
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x: point.x,
+      y: point.y
+    });
+    return { ok: true, itemId: "" };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Chrome could not reveal Flow result actions."
+    };
+  } finally {
+    try {
+      await chrome.debugger.detach(target);
+    } catch {
+      // Detach can fail if attach did not complete; the hover result above is the useful error.
     }
   }
 }

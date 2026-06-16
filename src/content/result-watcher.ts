@@ -2,6 +2,7 @@ import {
   findDownloadButtonForNewestResult,
   findGeneratedMediaElements,
   findLoadingIndicators,
+  findNewestGeneratedMediaElement,
   findResultCards
 } from "./dom-selectors";
 
@@ -9,6 +10,7 @@ export type ResultReadiness = {
   ready: boolean;
   hasDownloadButton: boolean;
   downloadButton: HTMLElement | null;
+  revealTarget: HTMLElement | null;
 };
 
 export function getResultReadiness(options: {
@@ -22,12 +24,14 @@ export function getResultReadiness(options: {
   const hasNewMedia = mediaCount > options.initialMediaCount;
   const loading = findLoadingIndicators().length > 0;
   const downloadButton = findDownloadButtonForNewestResult();
+  const revealTarget = findNewestGeneratedMediaElement() ?? findResultCards().at(-1) ?? null;
   const stabilized = Date.now() - options.submittedAt > 5000;
 
   return {
     ready: !loading && (Boolean(downloadButton) || (stabilized && (hasNewResult || hasNewMedia))),
     hasDownloadButton: Boolean(downloadButton),
-    downloadButton
+    downloadButton,
+    revealTarget
   };
 }
 
