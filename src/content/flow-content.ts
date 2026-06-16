@@ -28,13 +28,14 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
 });
 
 async function submitPrompt(message: Extract<ExtensionMessage, { type: "SUBMIT_PROMPT" }>): Promise<ContentAutomationResult> {
+  closeOpenOverlay();
   const input = findPromptInput();
   if (!input) return { ok: false, itemId: message.item.id, error: "Could not find the Google Flow prompt input." };
 
   setPromptText(input, message.item.prompt);
   const initialResultCount = findResultCards().length;
   const button = await waitForGenerateButton(input);
-  button.click();
+  clickLikeUser(button);
   activeSubmission = { itemId: message.item.id, initialResultCount };
 
   return { ok: true, itemId: message.item.id };
@@ -73,8 +74,32 @@ async function triggerDownload(
   const button =
     getReadyDownloadButton(initialResultCount) ??
     (await waitForReadyResult({ initialResultCount, timeoutMs: Math.min(message.maxWaitMs, 5000) }));
-  button.click();
+  clickLikeUser(button);
   return { ok: true, itemId: message.item.id };
+}
+
+function closeOpenOverlay(): void {
+  document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape", code: "Escape" }));
+  document.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Escape", code: "Escape" }));
+}
+
+function clickLikeUser(button: HTMLButtonElement): void {
+  button.scrollIntoView({ block: "center", inline: "center" });
+  button.focus();
+
+  for (const type of ["pointerover", "pointerenter", "pointermove", "pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+    button.dispatchEvent(
+      new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        button: 0,
+        buttons: type.endsWith("down") ? 1 : 0
+      })
+    );
+  }
+
+  button.click();
 }
 
 function toFailure(error: unknown, itemId?: string): ContentAutomationResult {

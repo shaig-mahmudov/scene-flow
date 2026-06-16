@@ -31,7 +31,7 @@ export function findPromptInput(): HTMLElement | null {
 }
 
 export function findGenerateButton(promptInput?: HTMLElement): HTMLButtonElement | null {
-  const labelledButton = buttonByTextOrLabel(/generate|create|submit|send/i);
+  const labelledButton = buttonByTextOrLabel(/generate|create|submit|send|arrow/i);
   if (labelledButton) return labelledButton;
 
   const formButton = promptInput?.closest("form")?.querySelector<HTMLButtonElement>('button[type="submit"]');
@@ -77,14 +77,13 @@ export function setPromptText(input: HTMLElement, prompt: string): void {
   input.focus();
 
   if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
-    input.value = prompt;
-    input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: prompt }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
+    setNativeInputValue(input, prompt);
+    dispatchTextEvents(input, prompt);
     return;
   }
 
-  input.textContent = prompt;
-  input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: prompt }));
+  insertContentEditableText(input, prompt);
+  dispatchTextEvents(input, prompt);
 }
 
 function isEditableInput(element: HTMLElement): boolean {
@@ -99,13 +98,68 @@ function findNearbyPromptButton(promptInput?: HTMLElement): HTMLButtonElement | 
   if (!promptInput) return null;
 
   let parent = promptInput.parentElement;
-  for (let depth = 0; parent && depth < 5; depth += 1) {
-    const buttons = visibleElements(parent.querySelectorAll<HTMLButtonElement>("button")).filter(
-      (button) => !/back|menu|filter|settings|collapse|trash/i.test(button.getAttribute("aria-label") ?? "")
-    );
-    if (buttons.length > 0) return buttons.at(-1) ?? null;
+  for (let depth = 0; parent && depth < 8; depth += 1) {
+    const parentRect = parent.getBoundingClientRect();
+    const inputRect = promptInput.getBoundingClientRect();
+    const looksLikeComposer =
+      parentRect.width >= inputRect.width &&
+      parentRect.width <= Math.max(inputRect.width + 900, 320) &&
+      Math.abs(parentRect.bottom - inputRect.bottom) < 160;
+
+    if (looksLikeComposer) {
+      const buttons = visibleElements(parent.querySelectorAll<HTMLButtonElement>("button"))
+        .filter(isPossibleSubmitButton)
+        .sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right);
+
+      if (buttons.length > 0) return buttons[0] ?? null;
+    }
+
     parent = parent.parentElement;
   }
 
   return null;
+}
+
+function setNativeInputValue(input: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+  const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
+  descriptor?.set?.call(input, value);
+}
+
+function dispatchTextEvents(input: HTMLElement, prompt: string): void {
+  input.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: prompt }));
+  input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: prompt }));
+  input.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: " ", code: "Space" }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function insertContentEditableText(input: HTMLElement, prompt: string): void {
+  input.focus();
+
+  const selection = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(input);
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+
+  const inserted = document.execCommand("insertText", false, prompt);
+  if (!inserted) {
+    input.textContent = prompt;
+  }
+}
+
+function isPossibleSubmitButton(button: HTMLButtonElement): boolean {
+  const label = button.getAttribute("aria-label") ?? "";
+  const title = button.getAttribute("title") ?? "";
+  const text = button.textContent?.trim() ?? "";
+  const combined = `${label} ${title} ${text}`;
+
+  if (button.disabled || button.getAttribute("aria-disabled") === "true") return false;
+  if (/add|upload|media|attach|agent|settings|filter|tune|menu|back|collapse|trash|voice|mic/i.test(combined)) {
+    return false;
+  }
+  if (text === "+" || text.toLowerCase() === "agent") return false;
+
+  const rect = button.getBoundingClientRect();
+  return rect.width <= 96 && rect.height <= 96;
 }
