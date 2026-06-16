@@ -2,6 +2,7 @@ import {
   findDownloadButtonNearNewestMedia,
   findGenerateButton,
   findGeneratedMediaElements,
+  findNewestGeneratedMediaSource,
   findOverflowMenuButtonNearNewestMedia,
   findOriginalSizeDownloadOption,
   findPromptInput,
@@ -35,6 +36,11 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
 
   if (message.type === "GET_DOWNLOAD_SIZE_OPTION") {
     sendResponse(getDownloadSizeOption(message));
+    return false;
+  }
+
+  if (message.type === "GET_NEWEST_MEDIA_SOURCE") {
+    sendResponse(getNewestMediaSource(message));
     return false;
   }
 
@@ -121,6 +127,17 @@ function getDownloadSizeOption(
     itemId: message.item.id,
     ready: Boolean(option),
     sizeClickPoint: option ? getElementCenter(option) : undefined
+  };
+}
+
+function getNewestMediaSource(
+  message: Extract<ExtensionMessage, { type: "GET_NEWEST_MEDIA_SOURCE" }>
+): ContentAutomationResult {
+  return {
+    ok: true,
+    itemId: message.item.id,
+    ready: true,
+    mediaUrl: findNewestGeneratedMediaSource()
   };
 }
 

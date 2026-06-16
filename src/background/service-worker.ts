@@ -201,11 +201,7 @@ async function triggerFlowDownload(
     await sleep(700);
   }
 
-  return {
-    ok: false,
-    error:
-      "Generated media was detected, but Scene Flow could not find a visible download button. Open the result card once and try again."
-  };
+  return downloadNewestMediaDirectly(item);
 }
 
 async function selectOriginalDownloadSize(item: QueueItem): Promise<ContentAutomationResult> {
@@ -224,6 +220,36 @@ async function selectOriginalDownloadSize(item: QueueItem): Promise<ContentAutom
     ok: false,
     error: "Download menu opened, but Scene Flow could not find the 1K/original size option."
   };
+}
+
+async function downloadNewestMediaDirectly(item: QueueItem): Promise<ContentAutomationResult> {
+  const sourceResult = await sendToActiveFlowTab({ type: "GET_NEWEST_MEDIA_SOURCE", item });
+  if (!sourceResult.ok) return sourceResult;
+  if (!sourceResult.mediaUrl) {
+    return {
+      ok: false,
+      error:
+        "Generated media was detected, but Scene Flow could not find a download button or media URL."
+    };
+  }
+
+  try {
+    await chrome.downloads.download({
+      url: sourceResult.mediaUrl,
+      filename: item.targetFilename,
+      conflictAction: "uniquify",
+      saveAs: false
+    });
+    return { ok: true, itemId: item.id };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof Error
+          ? `Direct media download failed: ${error.message}`
+          : "Direct media download failed."
+    };
+  }
 }
 
 async function waitForResultReady(item: QueueItem, maxWaitMs: number): Promise<ContentAutomationResult> {

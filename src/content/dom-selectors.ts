@@ -71,6 +71,39 @@ export function findNewestGeneratedMediaElement(): HTMLElement | null {
   );
 }
 
+export function findNewestGeneratedMediaSource(): string | undefined {
+  const media = findNewestGeneratedMediaElement();
+  if (!media) return undefined;
+
+  if (media instanceof HTMLImageElement) {
+    return media.currentSrc || media.src || undefined;
+  }
+
+  if (media instanceof HTMLVideoElement) {
+    return media.currentSrc || media.src || media.poster || undefined;
+  }
+
+  if (media instanceof HTMLCanvasElement) {
+    try {
+      return media.toDataURL("image/png");
+    } catch {
+      return undefined;
+    }
+  }
+
+  const backgroundImage = window.getComputedStyle(media).backgroundImage;
+  const backgroundUrl = extractCssUrl(backgroundImage);
+  if (backgroundUrl) return backgroundUrl;
+
+  const nestedImage = media.querySelector<HTMLImageElement>("img");
+  if (nestedImage) return nestedImage.currentSrc || nestedImage.src || undefined;
+
+  const nestedVideo = media.querySelector<HTMLVideoElement>("video");
+  if (nestedVideo) return nestedVideo.currentSrc || nestedVideo.src || nestedVideo.poster || undefined;
+
+  return undefined;
+}
+
 export function findLoadingIndicators(): HTMLElement[] {
   return visibleElements(
     document.querySelectorAll<HTMLElement>(
@@ -357,4 +390,9 @@ function isInsideNavigation(element: HTMLElement): boolean {
 
 function uniqueElements(elements: HTMLElement[]): HTMLElement[] {
   return [...new Set(elements)];
+}
+
+function extractCssUrl(value: string): string | undefined {
+  const match = /url\(["']?(.*?)["']?\)/.exec(value);
+  return match?.[1];
 }
