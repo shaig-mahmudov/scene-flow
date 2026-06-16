@@ -132,6 +132,20 @@ export function findOverflowMenuButtonNearNewestMedia(): HTMLElement | null {
   return null;
 }
 
+export function findOriginalSizeDownloadOption(): HTMLElement | null {
+  const candidates = visibleElements(
+    document.querySelectorAll<HTMLElement>(
+      '[role="menuitem"], [role="option"], button, [role="button"], li, div'
+    )
+  );
+
+  return (
+    candidates
+      .filter(isOriginalSizeOption)
+      .sort((a, b) => scoreOriginalSizeOption(b) - scoreOriginalSizeOption(a))[0] ?? null
+  );
+}
+
 export function setPromptText(input: HTMLElement, prompt: string): void {
   input.focus();
 
@@ -290,6 +304,47 @@ function isPossibleOverflowMenuButton(button: HTMLElement, mediaRect: DOMRect, p
   const hasMenuPopup = button.getAttribute("aria-haspopup") === "menu" || button.getAttribute("aria-expanded") !== null;
 
   return compact && inCard && nearMediaTopRight && (labelledAsMenu || hasMenuPopup || text.length === 0);
+}
+
+function isOriginalSizeOption(element: HTMLElement): boolean {
+  const rect = element.getBoundingClientRect();
+  const text = normalizedText(element);
+
+  if (isDisabled(element)) return false;
+  if (isInComposerArea(element) || isInsideNavigation(element)) return false;
+  if (rect.width < 32 || rect.height < 18 || rect.width > 320 || rect.height > 120) return false;
+  if (text.length > 90) return false;
+  if (/upgrade|upscaled|2k|4k|trash|delete|rename|share|animate|prompt|cover|flag/i.test(text)) {
+    return false;
+  }
+
+  return /\b(1k|1x)\b/i.test(text) || /original size/i.test(text);
+}
+
+function scoreOriginalSizeOption(element: HTMLElement): number {
+  const text = normalizedText(element);
+  let score = 0;
+  if (/\b1k\b/i.test(text)) score += 4;
+  if (/\b1x\b/i.test(text)) score += 4;
+  if (/original size/i.test(text)) score += 3;
+  if (element.getAttribute("role") === "menuitem" || element.getAttribute("role") === "option") {
+    score += 2;
+  }
+  if (element instanceof HTMLButtonElement) score += 1;
+  return score;
+}
+
+function normalizedText(element: HTMLElement): string {
+  return [
+    element.textContent,
+    element.getAttribute("aria-label"),
+    element.getAttribute("title"),
+    element.getAttribute("data-testid")
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function isInsideNavigation(element: HTMLElement): boolean {

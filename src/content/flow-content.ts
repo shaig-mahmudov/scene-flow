@@ -3,6 +3,7 @@ import {
   findGenerateButton,
   findGeneratedMediaElements,
   findOverflowMenuButtonNearNewestMedia,
+  findOriginalSizeDownloadOption,
   findPromptInput,
   findResultCards,
   setPromptText
@@ -29,6 +30,11 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
 
   if (message.type === "GET_DOWNLOAD_BUTTON") {
     sendResponse(getDownloadButton(message));
+    return false;
+  }
+
+  if (message.type === "GET_DOWNLOAD_SIZE_OPTION") {
+    sendResponse(getDownloadSizeOption(message));
     return false;
   }
 
@@ -103,6 +109,18 @@ function getDownloadButton(
     hasDownloadButton: Boolean(button),
     downloadClickPoint: button ? getElementCenter(button) : undefined,
     menuClickPoint: menuButton ? getElementCenter(menuButton) : undefined
+  };
+}
+
+function getDownloadSizeOption(
+  message: Extract<ExtensionMessage, { type: "GET_DOWNLOAD_SIZE_OPTION" }>
+): ContentAutomationResult {
+  const option = findOriginalSizeDownloadOption();
+  return {
+    ok: true,
+    itemId: message.item.id,
+    ready: Boolean(option),
+    sizeClickPoint: option ? getElementCenter(option) : undefined
   };
 }
 

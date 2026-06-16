@@ -10,6 +10,7 @@ export type ContentAutomationResult =
       revealPoint?: ViewportClickPoint;
       downloadClickPoint?: ViewportClickPoint;
       menuClickPoint?: ViewportClickPoint;
+      sizeClickPoint?: ViewportClickPoint;
     }
   | { ok: false; itemId?: string; error: string };
 
@@ -30,6 +31,7 @@ export type ExtensionMessage =
   | { type: "SUBMIT_PROMPT"; item: QueueItem; maxWaitMs: number }
   | { type: "CHECK_RESULT_READY"; item: QueueItem }
   | { type: "GET_DOWNLOAD_BUTTON"; item: QueueItem }
+  | { type: "GET_DOWNLOAD_SIZE_OPTION"; item: QueueItem }
   | { type: "TRIGGER_DOWNLOAD"; item: QueueItem; maxWaitMs: number }
   | { type: "PROMPT_SUBMITTED"; itemId: string }
   | { type: "RESULT_READY"; itemId: string }

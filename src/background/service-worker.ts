@@ -174,7 +174,9 @@ async function triggerFlowDownload(
   readyResult: Extract<ContentAutomationResult, { ok: true }>
 ): Promise<ContentAutomationResult> {
   if (readyResult.downloadClickPoint) {
-    return clickActiveFlowTabAt(readyResult.downloadClickPoint);
+    const downloadClickResult = await clickActiveFlowTabAt(readyResult.downloadClickPoint);
+    if (!downloadClickResult.ok) return downloadClickResult;
+    return selectOriginalDownloadSize(item);
   }
 
   if (readyResult.revealPoint) {
@@ -187,7 +189,9 @@ async function triggerFlowDownload(
     const buttonResult = await sendToActiveFlowTab({ type: "GET_DOWNLOAD_BUTTON", item });
     if (!buttonResult.ok) return buttonResult;
     if (buttonResult.downloadClickPoint) {
-      return clickActiveFlowTabAt(buttonResult.downloadClickPoint);
+      const downloadClickResult = await clickActiveFlowTabAt(buttonResult.downloadClickPoint);
+      if (!downloadClickResult.ok) return downloadClickResult;
+      return selectOriginalDownloadSize(item);
     }
     if (buttonResult.menuClickPoint) {
       const menuResult = await clickActiveFlowTabAt(buttonResult.menuClickPoint);
@@ -201,6 +205,24 @@ async function triggerFlowDownload(
     ok: false,
     error:
       "Generated media was detected, but Scene Flow could not find a visible download button. Open the result card once and try again."
+  };
+}
+
+async function selectOriginalDownloadSize(item: QueueItem): Promise<ContentAutomationResult> {
+  await sleep(700);
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const sizeResult = await sendToActiveFlowTab({ type: "GET_DOWNLOAD_SIZE_OPTION", item });
+    if (!sizeResult.ok) return sizeResult;
+    if (sizeResult.sizeClickPoint) {
+      return clickActiveFlowTabAt(sizeResult.sizeClickPoint);
+    }
+    await sleep(500);
+  }
+
+  return {
+    ok: false,
+    error: "Download menu opened, but Scene Flow could not find the 1K/original size option."
   };
 }
 
