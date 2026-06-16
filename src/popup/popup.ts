@@ -20,6 +20,7 @@ getElement<HTMLButtonElement>("startButton").addEventListener("click", () => sen
 getElement<HTMLButtonElement>("pauseButton").addEventListener("click", () => sendControl("QUEUE_PAUSE"));
 getElement<HTMLButtonElement>("resumeButton").addEventListener("click", () => sendControl("QUEUE_RESUME"));
 getElement<HTMLButtonElement>("stopButton").addEventListener("click", () => sendControl("QUEUE_STOP"));
+getElement<HTMLButtonElement>("retryFailedButton").addEventListener("click", () => sendControl("QUEUE_RETRY_FAILED"));
 getElement<HTMLButtonElement>("resetButton").addEventListener("click", () => sendControl("QUEUE_RESET"));
 getElement<HTMLButtonElement>("refreshButton").addEventListener("click", renderState);
 fileInput.addEventListener("change", handleFileUpload);
@@ -76,7 +77,9 @@ async function persistSettingsFromForm(): Promise<SceneFlowSettings> {
   return settings;
 }
 
-async function sendControl(type: "QUEUE_START" | "QUEUE_PAUSE" | "QUEUE_RESUME" | "QUEUE_STOP" | "QUEUE_RESET"): Promise<void> {
+async function sendControl(
+  type: "QUEUE_START" | "QUEUE_PAUSE" | "QUEUE_RESUME" | "QUEUE_STOP" | "QUEUE_RESET" | "QUEUE_RETRY_FAILED"
+): Promise<void> {
   await persistSettingsFromForm();
   await chrome.runtime.sendMessage({ type });
   await renderState();

@@ -30,8 +30,17 @@ export function findPromptInput(): HTMLElement | null {
   );
 }
 
-export function findGenerateButton(): HTMLButtonElement | null {
-  return buttonByTextOrLabel(/generate|create|submit/i);
+export function findGenerateButton(promptInput?: HTMLElement): HTMLButtonElement | null {
+  const labelledButton = buttonByTextOrLabel(/generate|create|submit|send/i);
+  if (labelledButton) return labelledButton;
+
+  const formButton = promptInput?.closest("form")?.querySelector<HTMLButtonElement>('button[type="submit"]');
+  if (formButton) return formButton;
+
+  const nearbyButton = findNearbyPromptButton(promptInput);
+  if (nearbyButton) return nearbyButton;
+
+  return document.querySelector<HTMLButtonElement>('button[type="submit"]');
 }
 
 export function findResultCards(): HTMLElement[] {
@@ -84,4 +93,19 @@ function isEditableInput(element: HTMLElement): boolean {
     element instanceof HTMLInputElement ||
     element.isContentEditable
   );
+}
+
+function findNearbyPromptButton(promptInput?: HTMLElement): HTMLButtonElement | null {
+  if (!promptInput) return null;
+
+  let parent = promptInput.parentElement;
+  for (let depth = 0; parent && depth < 5; depth += 1) {
+    const buttons = visibleElements(parent.querySelectorAll<HTMLButtonElement>("button")).filter(
+      (button) => !/back|menu|filter|settings|collapse|trash/i.test(button.getAttribute("aria-label") ?? "")
+    );
+    if (buttons.length > 0) return buttons.at(-1) ?? null;
+    parent = parent.parentElement;
+  }
+
+  return null;
 }

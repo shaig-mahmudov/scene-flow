@@ -24,16 +24,29 @@ async function submitPrompt(message: Extract<ExtensionMessage, { type: "SUBMIT_P
   const input = findPromptInput();
   if (!input) return { ok: false, itemId: message.item.id, error: "Could not find the Google Flow prompt input." };
 
-  const button = findGenerateButton();
-  if (!button) return { ok: false, itemId: message.item.id, error: "Could not find the Generate button." };
-  if (button.disabled) return { ok: false, itemId: message.item.id, error: "Generate button is disabled." };
-
   setPromptText(input, message.item.prompt);
   const initialResultCount = findResultCards().length;
+  const button = await waitForGenerateButton(input);
   button.click();
 
   await waitForReadyResult({ initialResultCount, timeoutMs: message.maxWaitMs });
   return { ok: true, itemId: message.item.id };
+}
+
+async function waitForGenerateButton(input: HTMLElement): Promise<HTMLButtonElement> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < 3000) {
+    const button = findGenerateButton(input);
+    if (button && !button.disabled && button.getAttribute("aria-disabled") !== "true") {
+      return button;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 100));
+  }
+
+  const button = findGenerateButton(input);
+  if (!button) throw new Error("Could not find the Generate button.");
+  throw new Error("Generate button is disabled after setting the prompt.");
 }
 
 async function triggerDownload(

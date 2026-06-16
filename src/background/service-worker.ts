@@ -1,4 +1,5 @@
 import { DEFAULT_SETTINGS } from "../core/config/defaults";
+import { isSupportedFlowUrl, supportedFlowUrlMessage } from "../core/config/supported-flow";
 import type { ContentAutomationResult, ExtensionMessage } from "../core/messaging/messages";
 import {
   loadQueue,
@@ -55,9 +56,25 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
       await setCurrentItem(null);
       await saveRunnerState(createInitialRunnerState());
       return { ok: true };
+    case "QUEUE_RETRY_FAILED":
+      await retryFailedItems();
+      return { ok: true };
     default:
       return { ok: false, error: `Unhandled message: ${message.type}` };
   }
+}
+
+async function retryFailedItems(): Promise<void> {
+  const queue = await loadQueue();
+  await saveQueue(
+    queue.map((item) =>
+      item.status === "failed" || item.status === "cancelled"
+        ? updateItemStatus(item, "pending", { attempts: 0, error: undefined, completedAt: undefined })
+        : item
+    )
+  );
+  await setCurrentItem(null);
+  await saveRunnerState(createInitialRunnerState("ready"));
 }
 
 async function runQueue(): Promise<void> {
@@ -164,8 +181,8 @@ async function cancelRemaining(): Promise<void> {
 
 async function sendToActiveFlowTab(message: ExtensionMessage): Promise<ContentAutomationResult> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id || !tab.url?.startsWith("https://flow.google.com/")) {
-    return { ok: false, error: "Open Google Flow in the active tab before starting the queue." };
+  if (!tab?.id || !isSupportedFlowUrl(tab.url)) {
+    return { ok: false, error: supportedFlowUrlMessage() };
   }
 
   return chrome.tabs.sendMessage(tab.id, message);

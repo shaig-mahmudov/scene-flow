@@ -11,6 +11,7 @@ export type ExtensionMessage =
   | { type: "QUEUE_RESUME" }
   | { type: "QUEUE_STOP" }
   | { type: "QUEUE_RESET" }
+  | { type: "QUEUE_RETRY_FAILED" }
   | { type: "QUEUE_STATE"; items: QueueItem[]; runnerState: RunnerState; settings: SceneFlowSettings }
   | { type: "SUBMIT_PROMPT"; item: QueueItem; maxWaitMs: number }
   | { type: "TRIGGER_DOWNLOAD"; item: QueueItem; maxWaitMs: number }

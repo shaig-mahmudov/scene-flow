@@ -12,7 +12,7 @@ A small minimalist stickman searches empty pockets for lost keys.
 A stickman pauses in a doorway, confused.
 ```
 
-The popup stores the parsed queue and settings in `chrome.storage.local`, then the background service worker coordinates serial execution against the active `https://flow.google.com/*` tab. Downloads are routed into `Downloads/google-flow-images/` by default with filenames such as `001_00-00_lost_keys.png`.
+The popup stores the parsed queue and settings in `chrome.storage.local`, then the background service worker coordinates serial execution against the active Google Flow tab. Supported Flow URLs are `https://flow.google.com/*` and `https://labs.google/fx/tools/flow*`. Downloads are routed into `Downloads/google-flow-images/` by default with filenames such as `001_00-00_lost_keys.png`.
 
 ## Development
 
