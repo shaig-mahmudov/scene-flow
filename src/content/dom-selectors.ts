@@ -42,9 +42,23 @@ export function findGenerateButton(promptInput?: HTMLElement): HTMLElement | nul
 
 export function findResultCards(): HTMLElement[] {
   const candidates = document.querySelectorAll<HTMLElement>(
-    '[data-testid*="result" i], [aria-label*="result" i], article, [role="article"], [class*="result" i]'
+    '[data-testid*="result" i], [data-testid*="asset" i], [aria-label*="result" i], [aria-label*="asset" i], article, [role="article"], [class*="result" i], [class*="asset" i]'
   );
-  return visibleElements(candidates);
+  return uniqueElements([...visibleElements(candidates), ...findGeneratedMediaElements()]);
+}
+
+export function findGeneratedMediaElements(): HTMLElement[] {
+  const candidates = document.querySelectorAll<HTMLElement>(
+    'img, video, canvas, [role="img"], [aria-label*="image" i], [aria-label*="video" i], [aria-label*="media" i]'
+  );
+
+  return visibleElements(candidates).filter((element) => {
+    const rect = element.getBoundingClientRect();
+    if (rect.width < 96 || rect.height < 96) return false;
+    if (isInComposerArea(element)) return false;
+    if (isInsideNavigation(element)) return false;
+    return true;
+  });
 }
 
 export function findLoadingIndicators(): HTMLElement[] {
@@ -197,4 +211,16 @@ function isDisabled(element: HTMLElement): boolean {
     element.getAttribute("aria-disabled") === "true" ||
     element.getAttribute("disabled") !== null
   );
+}
+
+function isInsideNavigation(element: HTMLElement): boolean {
+  return Boolean(
+    element.closest(
+      'nav, header, aside, [role="navigation"], [aria-label*="navigation" i], [aria-label*="sidebar" i]'
+    )
+  );
+}
+
+function uniqueElements(elements: HTMLElement[]): HTMLElement[] {
+  return [...new Set(elements)];
 }

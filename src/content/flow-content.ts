@@ -1,8 +1,16 @@
-import { findGenerateButton, findPromptInput, findResultCards, setPromptText } from "./dom-selectors";
-import { getReadyDownloadButton, waitForReadyResult } from "./result-watcher";
+import {
+  findGenerateButton,
+  findGeneratedMediaElements,
+  findPromptInput,
+  findResultCards,
+  setPromptText
+} from "./dom-selectors";
+import { getResultReadiness, waitForReadyResult } from "./result-watcher";
 import type { ContentAutomationResult, ExtensionMessage } from "../core/messaging/messages";
 
-let activeSubmission: { itemId: string; initialResultCount: number } | undefined;
+let activeSubmission:
+  | { itemId: string; initialResultCount: number; initialMediaCount: number; submittedAt: number }
+  | undefined;
 
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
   if (message.type === "SUBMIT_PROMPT") {
@@ -34,8 +42,9 @@ async function submitPrompt(message: Extract<ExtensionMessage, { type: "SUBMIT_P
 
   setPromptText(input, message.item.prompt);
   const initialResultCount = findResultCards().length;
+  const initialMediaCount = findGeneratedMediaElements().length;
   const button = await waitForGenerateButton(input);
-  activeSubmission = { itemId: message.item.id, initialResultCount };
+  activeSubmission = { itemId: message.item.id, initialResultCount, initialMediaCount, submittedAt: Date.now() };
 
   return { ok: true, itemId: message.item.id, clickPoint: getElementCenter(button) };
 }
@@ -61,8 +70,16 @@ function checkResultReady(
 ): ContentAutomationResult {
   const initialResultCount =
     activeSubmission?.itemId === message.item.id ? activeSubmission.initialResultCount : 0;
-  const button = getReadyDownloadButton(initialResultCount);
-  return { ok: true, itemId: message.item.id, ready: Boolean(button) };
+  const initialMediaCount =
+    activeSubmission?.itemId === message.item.id ? activeSubmission.initialMediaCount : 0;
+  const submittedAt = activeSubmission?.itemId === message.item.id ? activeSubmission.submittedAt : Date.now();
+  const readiness = getResultReadiness({ initialResultCount, initialMediaCount, submittedAt });
+  return {
+    ok: true,
+    itemId: message.item.id,
+    ready: readiness.ready,
+    hasDownloadButton: readiness.hasDownloadButton
+  };
 }
 
 async function triggerDownload(
@@ -70,9 +87,22 @@ async function triggerDownload(
 ): Promise<ContentAutomationResult> {
   const initialResultCount =
     activeSubmission?.itemId === message.item.id ? activeSubmission.initialResultCount : 0;
+  const initialMediaCount =
+    activeSubmission?.itemId === message.item.id ? activeSubmission.initialMediaCount : 0;
+  const submittedAt = activeSubmission?.itemId === message.item.id ? activeSubmission.submittedAt : Date.now();
+  const readiness = getResultReadiness({ initialResultCount, initialMediaCount, submittedAt });
+  if (!readiness.hasDownloadButton) {
+    return { ok: true, itemId: message.item.id };
+  }
+
   const button =
-    getReadyDownloadButton(initialResultCount) ??
-    (await waitForReadyResult({ initialResultCount, timeoutMs: Math.min(message.maxWaitMs, 5000) }));
+    readiness.downloadButton ??
+    (await waitForReadyResult({
+      initialResultCount,
+      initialMediaCount,
+      submittedAt,
+      timeoutMs: Math.min(message.maxWaitMs, 5000)
+    }));
   clickLikeUser(button);
   return { ok: true, itemId: message.item.id };
 }

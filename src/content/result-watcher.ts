@@ -1,16 +1,40 @@
-import { findDownloadButtonForNewestResult, findLoadingIndicators, findResultCards } from "./dom-selectors";
+import {
+  findDownloadButtonForNewestResult,
+  findGeneratedMediaElements,
+  findLoadingIndicators,
+  findResultCards
+} from "./dom-selectors";
 
-export function getReadyDownloadButton(initialResultCount: number): HTMLElement | null {
+export type ResultReadiness = {
+  ready: boolean;
+  hasDownloadButton: boolean;
+  downloadButton: HTMLElement | null;
+};
+
+export function getResultReadiness(options: {
+  initialResultCount: number;
+  initialMediaCount: number;
+  submittedAt: number;
+}): ResultReadiness {
   const resultCount = findResultCards().length;
-  const hasNewResult = resultCount > initialResultCount || resultCount > 0;
+  const mediaCount = findGeneratedMediaElements().length;
+  const hasNewResult = resultCount > options.initialResultCount;
+  const hasNewMedia = mediaCount > options.initialMediaCount;
   const loading = findLoadingIndicators().length > 0;
   const downloadButton = findDownloadButtonForNewestResult();
+  const stabilized = Date.now() - options.submittedAt > 5000;
 
-  return hasNewResult && !loading && downloadButton ? downloadButton : null;
+  return {
+    ready: !loading && (Boolean(downloadButton) || (stabilized && (hasNewResult || hasNewMedia))),
+    hasDownloadButton: Boolean(downloadButton),
+    downloadButton
+  };
 }
 
 export async function waitForReadyResult(options: {
   initialResultCount: number;
+  initialMediaCount: number;
+  submittedAt: number;
   timeoutMs: number;
 }): Promise<HTMLElement> {
   const startedAt = Date.now();
@@ -23,7 +47,8 @@ export async function waitForReadyResult(options: {
         return;
       }
 
-      const downloadButton = getReadyDownloadButton(options.initialResultCount);
+      const readiness = getResultReadiness(options);
+      const downloadButton = readiness.downloadButton;
 
       if (downloadButton) {
         window.setTimeout(() => {

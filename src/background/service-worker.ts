@@ -141,15 +141,17 @@ async function processItem(item: QueueItem): Promise<void> {
     return;
   }
 
-  await patchQueueItem(item.id, (current) => updateItemStatus(current, "downloading"));
-  const currentItem = (await loadQueue()).find((candidate) => candidate.id === item.id);
-  if (currentItem) await setCurrentItem(currentItem);
+  if (readyResult.hasDownloadButton) {
+    await patchQueueItem(item.id, (current) => updateItemStatus(current, "downloading"));
+    const currentItem = (await loadQueue()).find((candidate) => candidate.id === item.id);
+    if (currentItem) await setCurrentItem(currentItem);
 
-  const downloadResult = await sendToActiveFlowTab({ type: "TRIGGER_DOWNLOAD", item, maxWaitMs });
-  if (!downloadResult.ok) {
-    await setCurrentItem(null);
-    await handleFailure(item.id, downloadResult.error);
-    return;
+    const downloadResult = await sendToActiveFlowTab({ type: "TRIGGER_DOWNLOAD", item, maxWaitMs });
+    if (!downloadResult.ok) {
+      await setCurrentItem(null);
+      await handleFailure(item.id, downloadResult.error);
+      return;
+    }
   }
 
   await patchQueueItem(item.id, (current) => updateItemStatus(current, "cooldown"));
