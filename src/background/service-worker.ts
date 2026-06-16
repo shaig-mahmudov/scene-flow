@@ -180,7 +180,9 @@ async function waitForResultReady(item: QueueItem, maxWaitMs: number): Promise<C
 
     const result = await sendToActiveFlowTab({ type: "CHECK_RESULT_READY", item });
     if (!result.ok) return result;
-    if (result.ready) return { ok: true, itemId: item.id };
+    if (result.ready) {
+      return { ok: true, itemId: item.id, hasDownloadButton: result.hasDownloadButton };
+    }
 
     await sleep(1500);
   }

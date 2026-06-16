@@ -1,6 +1,6 @@
 import "./popup.css";
 import { parseMarkdownPrompts } from "../core/parser/markdown-parser";
-import { DEFAULT_SETTINGS } from "../core/config/defaults";
+import { DEFAULT_SETTINGS, STORAGE_KEYS } from "../core/config/defaults";
 import { createQueueItems, loadQueue, loadRunnerState, loadSettings, saveQueue, saveSettings } from "../core/queue/queue-store";
 import type { ExpectedExtension, QueueItem, SceneFlowSettings } from "../core/queue/queue-types";
 import { sanitizeFolder } from "../core/utils/sanitize";
@@ -35,6 +35,16 @@ async function init(): Promise<void> {
   const settings = await loadSettings();
   writeSettings(settings);
   await renderState();
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "local") return;
+    const watchedKeys = new Set<string>([STORAGE_KEYS.queue, STORAGE_KEYS.runnerState, STORAGE_KEYS.currentItem]);
+    if (Object.keys(changes).some((key) => watchedKeys.has(key))) {
+      void renderState();
+    }
+  });
+  window.setInterval(() => {
+    void renderState();
+  }, 1000);
 }
 
 async function handleFileUpload(): Promise<void> {
@@ -105,7 +115,7 @@ function renderQueue(queue: QueueItem[]): void {
   queueList.replaceChildren(
     ...queue.map((item) => {
       const row = document.createElement("li");
-      row.className = "queue-item";
+      row.className = `queue-item queue-item--${item.status}`;
 
       const index = document.createElement("span");
       index.className = "queue-index";

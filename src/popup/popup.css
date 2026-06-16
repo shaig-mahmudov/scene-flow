@@ -154,6 +154,24 @@ h2 {
   font-variant-numeric: tabular-nums;
 }
 
+.queue-item--running,
+.queue-item--waiting_result,
+.queue-item--downloading,
+.queue-item--cooldown {
+  border-color: #6aa7ff;
+  background: #f4f8ff;
+}
+
+.queue-item--done {
+  border-color: #8bc5a4;
+  background: #f4fbf7;
+}
+
+.queue-item--failed {
+  border-color: #f0a7a0;
+  background: #fff7f6;
+}
+
 .queue-title {
   min-width: 0;
 }
