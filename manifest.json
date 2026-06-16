@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Scene Flow",
+  "description": "Local-first timestamped prompt queue automation for Google Flow.",
+  "version": "0.1.0",
+  "action": {
+    "default_title": "Scene Flow",
+    "default_popup": "src/popup/popup.html"
+  },
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://flow.google.com/*"],
+      "js": ["content/flow-content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": ["storage", "activeTab", "downloads", "scripting"],
+  "host_permissions": ["https://flow.google.com/*"],
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}

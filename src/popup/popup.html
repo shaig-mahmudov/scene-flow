@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scene Flow</title>
+    <script type="module" src="./popup.ts"></script>
+  </head>
+  <body>
+    <main class="app">
+      <header class="header">
+        <div>
+          <h1>Scene Flow</h1>
+          <p id="statusText">Idle</p>
+        </div>
+        <button id="refreshButton" type="button" title="Refresh queue">Refresh</button>
+      </header>
+
+      <section class="section">
+        <label class="file-picker">
+          <span>Upload Markdown</span>
+          <input id="fileInput" type="file" accept=".md,.markdown,text/markdown,text/plain" />
+        </label>
+        <p id="parseMessage" class="message"></p>
+      </section>
+
+      <section class="settings-grid" aria-label="Settings">
+        <label>
+          Output folder
+          <input id="outputFolderInput" type="text" autocomplete="off" />
+        </label>
+        <label>
+          Cooldown seconds
+          <input id="cooldownInput" type="number" min="0" max="3600" step="1" />
+        </label>
+        <label>
+          Max wait minutes
+          <input id="maxWaitInput" type="number" min="1" max="180" step="1" />
+        </label>
+        <label>
+          Retry count
+          <input id="retryInput" type="number" min="0" max="10" step="1" />
+        </label>
+        <label>
+          Extension
+          <select id="extensionInput">
+            <option value="png">png</option>
+            <option value="jpg">jpg</option>
+            <option value="webp">webp</option>
+            <option value="mp4">mp4</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="controls" aria-label="Queue controls">
+        <button id="startButton" type="button">Start</button>
+        <button id="pauseButton" type="button">Pause</button>
+        <button id="resumeButton" type="button">Resume</button>
+        <button id="stopButton" type="button">Stop</button>
+        <button id="resetButton" type="button">Reset</button>
+      </section>
+
+      <section class="queue-section">
+        <div class="queue-heading">
+          <h2>Queue</h2>
+          <span id="queueCount">0 items</span>
+        </div>
+        <ol id="queueList" class="queue-list"></ol>
+      </section>
+    </main>
+  </body>
+</html>
