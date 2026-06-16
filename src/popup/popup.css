@@ -1,9 +1,23 @@
 :root {
-  color-scheme: light;
+  color-scheme: dark;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #202124;
-  background: #f8fafc;
+  color: #eef4ff;
+  background: #050509;
+  --surface: #0b0f17;
+  --surface-raised: #111827;
+  --surface-soft: #151b28;
+  --border: #263244;
+  --text: #eef4ff;
+  --muted: #96a3b8;
+  --blue: #4f8cff;
+  --blue-soft: rgba(79, 140, 255, 0.16);
+  --green: #3ddc97;
+  --green-soft: rgba(61, 220, 151, 0.14);
+  --red: #ff5d6c;
+  --red-soft: rgba(255, 93, 108, 0.14);
+  --purple: #a879ff;
+  --purple-soft: rgba(168, 121, 255, 0.15);
 }
 
 * {
@@ -14,6 +28,9 @@ body {
   width: 420px;
   min-height: 560px;
   margin: 0;
+  background:
+    linear-gradient(180deg, rgba(79, 140, 255, 0.08), transparent 180px),
+    var(--surface);
 }
 
 button,
@@ -24,15 +41,25 @@ select {
 
 button {
   min-height: 34px;
-  border: 1px solid #c9d3df;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: #ffffff;
-  color: #1f2937;
+  background: #101827;
+  color: var(--text);
   cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    transform 120ms ease;
 }
 
 button:hover {
-  background: #eef4ff;
+  border-color: var(--blue);
+  background: #142034;
+  transform: translateY(-1px);
+}
+
+button:active {
+  transform: translateY(0);
 }
 
 button:disabled {
@@ -45,6 +72,7 @@ button:disabled {
   flex-direction: column;
   gap: 14px;
   padding: 16px;
+  background: var(--surface);
 }
 
 .header,
@@ -64,35 +92,49 @@ p {
 h1 {
   font-size: 20px;
   line-height: 1.2;
+  color: var(--text);
 }
 
 h2 {
   font-size: 14px;
   line-height: 1.2;
+  color: var(--text);
 }
 
 #statusText,
 #queueCount,
 .message {
-  color: #5f6b7a;
+  color: var(--muted);
   font-size: 12px;
 }
 
 .section,
 .settings-grid,
 .queue-section {
-  border-top: 1px solid #dbe3ec;
+  border-top: 1px solid var(--border);
   padding-top: 14px;
 }
 
 .file-picker {
   display: grid;
   gap: 8px;
+  color: var(--text);
   font-weight: 600;
 }
 
 .file-picker input {
   width: 100%;
+  color: var(--muted);
+}
+
+.file-picker input::file-selector-button {
+  min-height: 30px;
+  margin-right: 8px;
+  border: 1px solid rgba(79, 140, 255, 0.55);
+  border-radius: 6px;
+  background: var(--blue-soft);
+  color: var(--text);
+  cursor: pointer;
 }
 
 .settings-grid {
@@ -104,7 +146,7 @@ h2 {
 .settings-grid label {
   display: grid;
   gap: 5px;
-  color: #344054;
+  color: #cbd7ea;
   font-size: 12px;
   font-weight: 600;
 }
@@ -113,17 +155,45 @@ h2 {
 .settings-grid select {
   width: 100%;
   min-height: 34px;
-  border: 1px solid #c9d3df;
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px 8px;
-  background: #ffffff;
-  color: #202124;
+  background: #080c13;
+  color: var(--text);
+  outline: none;
+}
+
+.settings-grid input:focus,
+.settings-grid select:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px rgba(79, 140, 255, 0.18);
 }
 
 .controls {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
+}
+
+.controls button:nth-child(1) {
+  border-color: rgba(79, 140, 255, 0.7);
+  background: linear-gradient(180deg, rgba(79, 140, 255, 0.3), rgba(79, 140, 255, 0.12));
+}
+
+.controls button:nth-child(2),
+.controls button:nth-child(3) {
+  border-color: rgba(168, 121, 255, 0.58);
+  background: var(--purple-soft);
+}
+
+.controls button:nth-child(4) {
+  border-color: rgba(255, 93, 108, 0.62);
+  background: var(--red-soft);
+}
+
+.controls button:nth-child(5) {
+  border-color: rgba(61, 220, 151, 0.58);
+  background: var(--green-soft);
 }
 
 .queue-list {
@@ -134,6 +204,7 @@ h2 {
   padding: 0;
   overflow: auto;
   list-style: none;
+  scrollbar-color: var(--border) transparent;
 }
 
 .queue-item {
@@ -142,14 +213,14 @@ h2 {
   gap: 8px;
   align-items: center;
   padding: 8px;
-  border: 1px solid #d8e1ec;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: #ffffff;
+  background: var(--surface-raised);
 }
 
 .queue-index,
 .queue-status {
-  color: #64748b;
+  color: var(--muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
@@ -158,18 +229,24 @@ h2 {
 .queue-item--waiting_result,
 .queue-item--downloading,
 .queue-item--cooldown {
-  border-color: #6aa7ff;
-  background: #f4f8ff;
+  border-color: rgba(79, 140, 255, 0.78);
+  background: var(--blue-soft);
 }
 
 .queue-item--done {
-  border-color: #8bc5a4;
-  background: #f4fbf7;
+  border-color: rgba(61, 220, 151, 0.76);
+  background: var(--green-soft);
 }
 
 .queue-item--failed {
-  border-color: #f0a7a0;
-  background: #fff7f6;
+  border-color: rgba(255, 93, 108, 0.78);
+  background: var(--red-soft);
+}
+
+.queue-item--paused,
+.queue-item--cancelled {
+  border-color: rgba(168, 121, 255, 0.68);
+  background: var(--purple-soft);
 }
 
 .queue-title {
@@ -186,13 +263,14 @@ h2 {
 
 .queue-title strong {
   font-size: 12px;
+  color: var(--text);
 }
 
 .queue-title span {
-  color: #64748b;
+  color: var(--muted);
   font-size: 11px;
 }
 
 .is-error {
-  color: #b42318;
+  color: var(--red);
 }
