@@ -35,10 +35,9 @@ async function submitPrompt(message: Extract<ExtensionMessage, { type: "SUBMIT_P
   setPromptText(input, message.item.prompt);
   const initialResultCount = findResultCards().length;
   const button = await waitForGenerateButton(input);
-  clickLikeUser(button);
   activeSubmission = { itemId: message.item.id, initialResultCount };
 
-  return { ok: true, itemId: message.item.id };
+  return { ok: true, itemId: message.item.id, clickPoint: getElementCenter(button) };
 }
 
 async function waitForGenerateButton(input: HTMLElement): Promise<HTMLElement> {
@@ -100,6 +99,14 @@ function clickLikeUser(button: HTMLElement): void {
   }
 
   button.click();
+}
+
+function getElementCenter(element: HTMLElement): { x: number; y: number } {
+  const rect = element.getBoundingClientRect();
+  return {
+    x: Math.round(rect.left + rect.width / 2),
+    y: Math.round(rect.top + rect.height / 2)
+  };
 }
 
 function toFailure(error: unknown, itemId?: string): ContentAutomationResult {

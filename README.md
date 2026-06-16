@@ -33,5 +33,6 @@ Scene Flow stores queue data and settings locally in your browser using `chrome.
 - Runs one prompt at a time.
 - Requires the Google Flow tab to be active before starting.
 - Uses the visible page UI and the normal download button.
+- Uses Chrome's `debugger` permission only to dispatch a real click to the active Flow project's send button when synthetic clicks are ignored.
 - Uses conservative DOM selector fallbacks because Google Flow UI can change.
 - No analytics, remote scripts, cookies, history, or `<all_urls>` permission.

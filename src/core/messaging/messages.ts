@@ -1,8 +1,13 @@
 import type { QueueItem, RunnerState, SceneFlowSettings } from "../queue/queue-types";
 
 export type ContentAutomationResult =
-  | { ok: true; itemId: string; ready?: boolean }
+  | { ok: true; itemId: string; ready?: boolean; clickPoint?: ViewportClickPoint }
   | { ok: false; itemId?: string; error: string };
+
+export type ViewportClickPoint = {
+  x: number;
+  y: number;
+};
 
 export type ExtensionMessage =
   | { type: "QUEUE_LOAD"; items: QueueItem[] }

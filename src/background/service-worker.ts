@@ -123,6 +123,16 @@ async function processItem(item: QueueItem): Promise<void> {
     await handleFailure(item.id, submitResult.error);
     return;
   }
+  if (!submitResult.clickPoint) {
+    await handleFailure(item.id, "Could not locate the active Flow send button.");
+    return;
+  }
+
+  const clickResult = await clickActiveFlowTabAt(submitResult.clickPoint);
+  if (!clickResult.ok) {
+    await handleFailure(item.id, clickResult.error);
+    return;
+  }
 
   await patchQueueItem(item.id, (current) => updateItemStatus(current, "waiting_result"));
   const readyResult = await waitForResultReady(item, maxWaitMs);
@@ -204,7 +214,7 @@ async function cancelRemaining(): Promise<void> {
 }
 
 async function sendToActiveFlowTab(message: ExtensionMessage): Promise<ContentAutomationResult> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = await getActiveFlowTab();
   if (!tab?.id || !isRunnableFlowProjectUrl(tab.url)) {
     return { ok: false, error: supportedFlowUrlMessage() };
   }
@@ -217,6 +227,59 @@ async function sendToActiveFlowTab(message: ExtensionMessage): Promise<ContentAu
       error: error instanceof Error ? error.message : "Could not communicate with the Google Flow page."
     };
   }
+}
+
+async function clickActiveFlowTabAt(point: { x: number; y: number }): Promise<ContentAutomationResult> {
+  const tab = await getActiveFlowTab();
+  if (!tab?.id || !isRunnableFlowProjectUrl(tab.url)) {
+    return { ok: false, error: supportedFlowUrlMessage() };
+  }
+
+  const target: chrome.debugger.Debuggee = { tabId: tab.id };
+  try {
+    await chrome.debugger.attach(target, "1.3");
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x: point.x,
+      y: point.y
+    });
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      x: point.x,
+      y: point.y,
+      button: "left",
+      buttons: 1,
+      clickCount: 1
+    });
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      x: point.x,
+      y: point.y,
+      button: "left",
+      buttons: 0,
+      clickCount: 1
+    });
+    return { ok: true, itemId: "" };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Chrome could not dispatch a real click to the Flow send button."
+    };
+  } finally {
+    try {
+      await chrome.debugger.detach(target);
+    } catch {
+      // Detach can fail if attach did not complete; the click result above is the useful error.
+    }
+  }
+}
+
+async function getActiveFlowTab(): Promise<chrome.tabs.Tab | undefined> {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab;
 }
 
 function runningState(activeItemId: string): RunnerState {
