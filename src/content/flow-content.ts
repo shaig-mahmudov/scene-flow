@@ -63,9 +63,17 @@ async function submitPrompt(message: Extract<ExtensionMessage, { type: "SUBMIT_P
   const initialResultCount = findResultCards().length;
   const initialMediaCount = findGeneratedMediaElements().length;
   const button = await waitForGenerateButton(input);
-  activeSubmission = { itemId: message.item.id, initialResultCount, initialMediaCount, submittedAt: Date.now() };
+  const submittedAt = Date.now();
+  activeSubmission = { itemId: message.item.id, initialResultCount, initialMediaCount, submittedAt };
 
-  return { ok: true, itemId: message.item.id, clickPoint: getElementCenter(button) };
+  return {
+    ok: true,
+    itemId: message.item.id,
+    clickPoint: getElementCenter(button),
+    submittedAt,
+    initialResultCount,
+    initialMediaCount
+  };
 }
 
 async function waitForGenerateButton(input: HTMLElement): Promise<HTMLElement> {
@@ -88,10 +96,14 @@ function checkResultReady(
   message: Extract<ExtensionMessage, { type: "CHECK_RESULT_READY" }>
 ): ContentAutomationResult {
   const initialResultCount =
-    activeSubmission?.itemId === message.item.id ? activeSubmission.initialResultCount : 0;
+    message.item.initialResultCount ??
+    (activeSubmission?.itemId === message.item.id ? activeSubmission.initialResultCount : 0);
   const initialMediaCount =
-    activeSubmission?.itemId === message.item.id ? activeSubmission.initialMediaCount : 0;
-  const submittedAt = activeSubmission?.itemId === message.item.id ? activeSubmission.submittedAt : Date.now();
+    message.item.initialMediaCount ??
+    (activeSubmission?.itemId === message.item.id ? activeSubmission.initialMediaCount : 0);
+  const submittedAt =
+    message.item.submittedAt ??
+    (activeSubmission?.itemId === message.item.id ? activeSubmission.submittedAt : Date.now());
   const readiness = getResultReadiness({ initialResultCount, initialMediaCount, submittedAt });
   return {
     ok: true,
@@ -99,7 +111,10 @@ function checkResultReady(
     ready: readiness.ready,
     hasDownloadButton: readiness.hasDownloadButton,
     downloadClickPoint: readiness.downloadButton ? getElementCenter(readiness.downloadButton) : undefined,
-    revealPoint: readiness.revealTarget ? getElementCenter(readiness.revealTarget) : undefined
+    revealPoint: readiness.revealTarget ? getElementCenter(readiness.revealTarget) : undefined,
+    submittedAt,
+    initialResultCount,
+    initialMediaCount
   };
 }
 
@@ -145,10 +160,14 @@ async function triggerDownload(
   message: Extract<ExtensionMessage, { type: "TRIGGER_DOWNLOAD" }>
 ): Promise<ContentAutomationResult> {
   const initialResultCount =
-    activeSubmission?.itemId === message.item.id ? activeSubmission.initialResultCount : 0;
+    message.item.initialResultCount ??
+    (activeSubmission?.itemId === message.item.id ? activeSubmission.initialResultCount : 0);
   const initialMediaCount =
-    activeSubmission?.itemId === message.item.id ? activeSubmission.initialMediaCount : 0;
-  const submittedAt = activeSubmission?.itemId === message.item.id ? activeSubmission.submittedAt : Date.now();
+    message.item.initialMediaCount ??
+    (activeSubmission?.itemId === message.item.id ? activeSubmission.initialMediaCount : 0);
+  const submittedAt =
+    message.item.submittedAt ??
+    (activeSubmission?.itemId === message.item.id ? activeSubmission.submittedAt : Date.now());
   const readiness = getResultReadiness({ initialResultCount, initialMediaCount, submittedAt });
   if (!readiness.hasDownloadButton) {
     const button = findDownloadButtonNearNewestMedia();

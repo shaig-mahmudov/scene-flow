@@ -21,12 +21,25 @@ import {
   type DownloadWatch
 } from "./download-router";
 
+const RUNNER_ALARM_NAME = "scene-flow-runner-watchdog";
+const RUNNER_ALARM_PERIOD_MINUTES = 0.5;
+const RUNNER_ALARM_DELAY_MINUTES = 0.5;
+
 let runnerActive = false;
 
 installDownloadRouter();
 
 chrome.runtime.onInstalled.addListener(() => {
-  void ensureInitialState();
+  void ensureInitialState().then(resumeSavedQueueIfNeeded);
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  void resumeSavedQueueIfNeeded();
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== RUNNER_ALARM_NAME) return;
+  void resumeSavedQueueIfNeeded();
 });
 
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
@@ -55,6 +68,7 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
         const targetResult = await ensureFlowTargetTab();
         if (!targetResult.ok) return targetResult;
       }
+      await armRunnerWatchdog();
       void runQueue();
       return { ok: true };
     case "QUEUE_PAUSE":
@@ -64,6 +78,7 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
       await saveRunnerState({ ...(await loadRunnerState()), stopRequested: true, status: "stopping", updatedAt: Date.now() });
       return { ok: true };
     case "QUEUE_RESET":
+      await disarmRunnerWatchdog();
       await saveQueue([]);
       await setCurrentItem(null);
       await saveRunnerState(createInitialRunnerState());
@@ -145,6 +160,7 @@ async function runQueue(): Promise<void> {
     }
   } finally {
     runnerActive = false;
+    await updateRunnerWatchdogForState();
   }
 }
 
@@ -192,8 +208,15 @@ async function processItem(item: QueueItem): Promise<void> {
     return;
   }
 
-  await patchQueueItem(item.id, (current) => updateItemStatus(current, "waiting_result"));
-  await waitForAndDownloadItem(item, settings, maxWaitMs);
+  await patchQueueItem(item.id, (current) =>
+    updateItemStatus(current, "waiting_result", {
+      submittedAt: submitResult.submittedAt,
+      initialResultCount: submitResult.initialResultCount,
+      initialMediaCount: submitResult.initialMediaCount
+    })
+  );
+  const waitingItem = (await loadQueue()).find((candidate) => candidate.id === item.id) ?? item;
+  await waitForAndDownloadItem(waitingItem, settings, maxWaitMs);
 }
 
 async function waitForAndDownloadItem(item: QueueItem, settings: SceneFlowSettings, maxWaitMs: number): Promise<void> {
@@ -557,6 +580,57 @@ async function notifyQueueCompleted(queue: QueueItem[]): Promise<void> {
   }
 }
 
+async function resumeSavedQueueIfNeeded(): Promise<void> {
+  if (runnerActive) return;
+
+  const [state, queue] = await Promise.all([loadRunnerState(), loadQueue()]);
+  if (!shouldResumeRunner(state, queue)) {
+    await updateRunnerWatchdogForState(state, queue);
+    return;
+  }
+
+  await armRunnerWatchdog();
+  void runQueue();
+}
+
+async function updateRunnerWatchdogForState(
+  state?: RunnerState,
+  queue?: QueueItem[]
+): Promise<void> {
+  const currentState = state ?? (await loadRunnerState());
+  const currentQueue = queue ?? (await loadQueue());
+  if (shouldKeepRunnerWatchdog(currentState, currentQueue)) {
+    await armRunnerWatchdog();
+    return;
+  }
+
+  await disarmRunnerWatchdog();
+}
+
+function shouldResumeRunner(state: RunnerState, queue: QueueItem[]): boolean {
+  if (state.pauseRequested || state.status === "paused") return false;
+  if (state.stopRequested || state.status === "stopping") return true;
+  if (state.status === "running") return queue.some(isRunnableQueueItem);
+  return queue.some((item) => item.status === "running" || item.status === "waiting_result" || item.status === "downloading");
+}
+
+function shouldKeepRunnerWatchdog(state: RunnerState, queue: QueueItem[]): boolean {
+  if (state.pauseRequested || state.status === "paused") return false;
+  if (state.stopRequested || state.status === "stopping") return true;
+  return state.status === "running" && queue.some(isRunnableQueueItem);
+}
+
+async function armRunnerWatchdog(): Promise<void> {
+  await chrome.alarms.create(RUNNER_ALARM_NAME, {
+    delayInMinutes: RUNNER_ALARM_DELAY_MINUTES,
+    periodInMinutes: RUNNER_ALARM_PERIOD_MINUTES
+  });
+}
+
+async function disarmRunnerWatchdog(): Promise<void> {
+  await chrome.alarms.clear(RUNNER_ALARM_NAME);
+}
+
 async function sendToActiveFlowTab(message: ExtensionMessage): Promise<ContentAutomationResult> {
   const tab = await getTargetFlowTab();
   if (!tab?.id || !isRunnableFlowProjectUrl(tab.url)) {
@@ -675,7 +749,7 @@ async function getStoredFlowTab(): Promise<chrome.tabs.Tab | undefined> {
 
   try {
     const tab = await chrome.tabs.get(target.tabId);
-    if (tab.id && isRunnableFlowProjectUrl(tab.url)) return tab;
+    if (isUsableFlowTab(tab)) return tab;
   } catch {
     // The stored tab was closed or Chrome no longer exposes it.
   }
@@ -686,7 +760,7 @@ async function getStoredFlowTab(): Promise<chrome.tabs.Tab | undefined> {
 
 async function captureActiveFlowTabTarget(): Promise<chrome.tabs.Tab | undefined> {
   const tab = await getActiveFlowTab();
-  if (!tab?.id || !isRunnableFlowProjectUrl(tab.url)) return undefined;
+  if (!tab || !isUsableFlowTab(tab)) return undefined;
 
   await saveFlowTargetTab(tab);
   return tab;
@@ -694,7 +768,7 @@ async function captureActiveFlowTabTarget(): Promise<chrome.tabs.Tab | undefined
 
 async function captureAnyFlowTabTarget(): Promise<chrome.tabs.Tab | undefined> {
   const tabs = await chrome.tabs.query({});
-  const tab = tabs.find((candidate) => candidate.id && isRunnableFlowProjectUrl(candidate.url));
+  const tab = tabs.find(isUsableFlowTab);
   if (!tab?.id) return undefined;
 
   await saveFlowTargetTab(tab);
@@ -704,12 +778,22 @@ async function captureAnyFlowTabTarget(): Promise<chrome.tabs.Tab | undefined> {
 async function saveFlowTargetTab(tab: chrome.tabs.Tab): Promise<void> {
   if (!tab.id) return;
 
+  try {
+    await chrome.tabs.update(tab.id, { autoDiscardable: false });
+  } catch {
+    // Some Chrome versions or managed profiles may reject this; the stored target still helps.
+  }
+
   await saveTargetTab({
     tabId: tab.id,
     windowId: tab.windowId,
     url: tab.url,
     capturedAt: Date.now()
   });
+}
+
+function isUsableFlowTab(tab: chrome.tabs.Tab): boolean {
+  return Boolean(tab.id && !tab.discarded && isRunnableFlowProjectUrl(tab.url));
 }
 
 async function openControlWindow(): Promise<void> {

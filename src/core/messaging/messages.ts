@@ -7,6 +7,9 @@ export type ContentAutomationResult =
       ready?: boolean;
       hasDownloadButton?: boolean;
       clickPoint?: ViewportClickPoint;
+      submittedAt?: number;
+      initialResultCount?: number;
+      initialMediaCount?: number;
       revealPoint?: ViewportClickPoint;
       downloadClickPoint?: ViewportClickPoint;
       menuClickPoint?: ViewportClickPoint;

@@ -39,6 +39,9 @@ export type QueueItem = {
   maxRetries: number;
   createdAt: number;
   startedAt?: number;
+  submittedAt?: number;
+  initialResultCount?: number;
+  initialMediaCount?: number;
   completedAt?: number;
   error?: string;
 };
