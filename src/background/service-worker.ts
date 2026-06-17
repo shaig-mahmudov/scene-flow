@@ -10,7 +10,7 @@ import {
   setCurrentItem
 } from "../core/queue/queue-store";
 import { createInitialRunnerState, updateItemStatus } from "../core/queue/queue-state-machine";
-import type { QueueItem, RunnerState } from "../core/queue/queue-types";
+import type { QueueItem, RunnerState, SceneFlowSettings } from "../core/queue/queue-types";
 import { installDownloadRouter } from "./download-router";
 
 let runnerActive = false;
@@ -97,6 +97,19 @@ async function runQueue(): Promise<void> {
       }
 
       const queue = await loadQueue();
+      const failedItem = queue.find((candidate) => candidate.status === "failed");
+      if (failedItem) {
+        await saveRunnerState({
+          ...state,
+          status: "paused",
+          activeItemId: failedItem.id,
+          pauseRequested: true,
+          error: failedItem.error,
+          updatedAt: Date.now()
+        });
+        return;
+      }
+
       const item = queue.find((candidate) => candidate.status === "pending" || candidate.status === "paused");
       if (!item) {
         await saveRunnerState({ ...state, status: "completed", activeItemId: undefined, updatedAt: Date.now() });
@@ -120,24 +133,24 @@ async function processItem(item: QueueItem): Promise<void> {
   const maxWaitMs = settings.maxWaitMinutesPerPrompt * 60 * 1000;
   const submitResult = await sendToActiveFlowTab({ type: "SUBMIT_PROMPT", item, maxWaitMs });
   if (!submitResult.ok) {
-    await handleFailure(item.id, submitResult.error);
+    await handleFailure(item.id, submitResult.error, settings);
     return;
   }
   if (!submitResult.clickPoint) {
-    await handleFailure(item.id, "Could not locate the active Flow send button.");
+    await handleFailure(item.id, "Could not locate the active Flow send button.", settings);
     return;
   }
 
   const clickResult = await clickActiveFlowTabAt(submitResult.clickPoint);
   if (!clickResult.ok) {
-    await handleFailure(item.id, clickResult.error);
+    await handleFailure(item.id, clickResult.error, settings);
     return;
   }
 
   await patchQueueItem(item.id, (current) => updateItemStatus(current, "waiting_result"));
   const readyResult = await waitForResultReady(item, maxWaitMs);
   if (!readyResult.ok) {
-    await handleFailure(item.id, readyResult.error);
+    await handleFailure(item.id, readyResult.error, settings);
     return;
   }
 
@@ -148,7 +161,7 @@ async function processItem(item: QueueItem): Promise<void> {
   const downloadResult = await triggerFlowDownload(item, readyResult);
   if (!downloadResult.ok) {
     await setCurrentItem(null);
-    await handleFailure(item.id, downloadResult.error);
+    await handleFailure(item.id, downloadResult.error, settings);
     return;
   }
 
@@ -277,13 +290,42 @@ async function waitForResultReady(item: QueueItem, maxWaitMs: number): Promise<C
   return { ok: false, itemId: item.id, error: "Timed out waiting for a ready result." };
 }
 
-async function handleFailure(itemId: string, error: string): Promise<void> {
+async function handleFailure(itemId: string, error: string, settings: SceneFlowSettings): Promise<void> {
+  const retry = await markFailureForRetry(itemId, error);
+  if (!retry) {
+    await saveRunnerState({
+      ...(await loadRunnerState()),
+      status: "paused",
+      activeItemId: itemId,
+      pauseRequested: true,
+      stopRequested: false,
+      error,
+      updatedAt: Date.now()
+    });
+    return;
+  }
+
+  await sleep(retryDelayMs(settings));
+
+  const state = await loadRunnerState();
+  if (state.stopRequested) return;
+  if (state.pauseRequested) {
+    await patchQueueItem(itemId, (current) => updateItemStatus(current, "paused", { error }));
+    return;
+  }
+
+  await patchQueueItem(itemId, (current) => updateItemStatus(current, "pending", { error }));
+}
+
+async function markFailureForRetry(itemId: string, error: string): Promise<boolean> {
+  let retry = false;
   await patchQueueItem(itemId, (current) => {
-    if (current.attempts <= current.maxRetries) {
-      return updateItemStatus(current, "pending", { error });
-    }
-    return updateItemStatus(current, "failed", { error });
+    retry = current.attempts <= current.maxRetries;
+    return retry
+      ? updateItemStatus(current, "cooldown", { error })
+      : updateItemStatus(current, "failed", { error });
   });
+  return retry;
 }
 
 async function patchQueueItem(itemId: string, patcher: (item: QueueItem) => QueueItem): Promise<void> {
@@ -295,7 +337,12 @@ async function cancelRemaining(): Promise<void> {
   const queue = await loadQueue();
   await saveQueue(
     queue.map((item) =>
-      item.status === "pending" || item.status === "paused" || item.status === "running"
+      item.status === "pending" ||
+      item.status === "paused" ||
+      item.status === "running" ||
+      item.status === "waiting_result" ||
+      item.status === "downloading" ||
+      item.status === "cooldown"
         ? updateItemStatus(item, "cancelled")
         : item
     )
@@ -417,4 +464,8 @@ function runningState(activeItemId: string): RunnerState {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function retryDelayMs(settings: SceneFlowSettings): number {
+  return Math.max(3000, settings.cooldownSeconds * 1000);
 }
