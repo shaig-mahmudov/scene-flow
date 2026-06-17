@@ -12,6 +12,7 @@ export const STORAGE_KEYS = {
   settings: "sceneFlow.settings",
   queue: "sceneFlow.queue",
   currentItem: "sceneFlow.currentItem",
+  targetTab: "sceneFlow.targetTab",
   runnerState: "sceneFlow.runnerState",
   lastRun: "sceneFlow.lastRun"
 } as const;

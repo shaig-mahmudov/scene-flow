@@ -5,8 +5,10 @@ import {
   loadQueue,
   loadRunnerState,
   loadSettings,
+  loadTargetTab,
   saveQueue,
   saveRunnerState,
+  saveTargetTab,
   setCurrentItem
 } from "../core/queue/queue-store";
 import { createInitialRunnerState, updateItemStatus } from "../core/queue/queue-state-machine";
@@ -43,6 +45,10 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
   switch (message.type) {
     case "QUEUE_START":
     case "QUEUE_RESUME":
+      {
+        const targetResult = await ensureFlowTargetTab();
+        if (!targetResult.ok) return targetResult;
+      }
       void runQueue();
       return { ok: true };
     case "QUEUE_PAUSE":
@@ -58,6 +64,10 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
       return { ok: true };
     case "QUEUE_RETRY_FAILED":
       await retryFailedItems();
+      return { ok: true };
+    case "OPEN_CONTROL_WINDOW":
+      await captureActiveFlowTabTarget();
+      await openControlWindow();
       return { ok: true };
     default:
       return { ok: false, error: `Unhandled message: ${message.type}` };
@@ -371,7 +381,7 @@ async function notifyQueueCompleted(queue: QueueItem[]): Promise<void> {
 }
 
 async function sendToActiveFlowTab(message: ExtensionMessage): Promise<ContentAutomationResult> {
-  const tab = await getActiveFlowTab();
+  const tab = await getTargetFlowTab();
   if (!tab?.id || !isRunnableFlowProjectUrl(tab.url)) {
     return { ok: false, error: supportedFlowUrlMessage() };
   }
@@ -387,7 +397,7 @@ async function sendToActiveFlowTab(message: ExtensionMessage): Promise<ContentAu
 }
 
 async function clickActiveFlowTabAt(point: { x: number; y: number }): Promise<ContentAutomationResult> {
-  const tab = await getActiveFlowTab();
+  const tab = await getTargetFlowTab();
   if (!tab?.id || !isRunnableFlowProjectUrl(tab.url)) {
     return { ok: false, error: supportedFlowUrlMessage() };
   }
@@ -435,7 +445,7 @@ async function clickActiveFlowTabAt(point: { x: number; y: number }): Promise<Co
 }
 
 async function hoverActiveFlowTabAt(point: { x: number; y: number }): Promise<ContentAutomationResult> {
-  const tab = await getActiveFlowTab();
+  const tab = await getTargetFlowTab();
   if (!tab?.id || !isRunnableFlowProjectUrl(tab.url)) {
     return { ok: false, error: supportedFlowUrlMessage() };
   }
@@ -469,6 +479,70 @@ async function hoverActiveFlowTabAt(point: { x: number; y: number }): Promise<Co
 async function getActiveFlowTab(): Promise<chrome.tabs.Tab | undefined> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
+}
+
+async function ensureFlowTargetTab(): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (await captureActiveFlowTabTarget()) return { ok: true };
+  if (await getStoredFlowTab()) return { ok: true };
+  if (await captureAnyFlowTabTarget()) return { ok: true };
+  return { ok: false, error: supportedFlowUrlMessage() };
+}
+
+async function getTargetFlowTab(): Promise<chrome.tabs.Tab | undefined> {
+  return (await getStoredFlowTab()) ?? (await captureActiveFlowTabTarget()) ?? (await captureAnyFlowTabTarget());
+}
+
+async function getStoredFlowTab(): Promise<chrome.tabs.Tab | undefined> {
+  const target = await loadTargetTab();
+  if (!target) return undefined;
+
+  try {
+    const tab = await chrome.tabs.get(target.tabId);
+    if (tab.id && isRunnableFlowProjectUrl(tab.url)) return tab;
+  } catch {
+    // The stored tab was closed or Chrome no longer exposes it.
+  }
+
+  await saveTargetTab(null);
+  return undefined;
+}
+
+async function captureActiveFlowTabTarget(): Promise<chrome.tabs.Tab | undefined> {
+  const tab = await getActiveFlowTab();
+  if (!tab?.id || !isRunnableFlowProjectUrl(tab.url)) return undefined;
+
+  await saveFlowTargetTab(tab);
+  return tab;
+}
+
+async function captureAnyFlowTabTarget(): Promise<chrome.tabs.Tab | undefined> {
+  const tabs = await chrome.tabs.query({});
+  const tab = tabs.find((candidate) => candidate.id && isRunnableFlowProjectUrl(candidate.url));
+  if (!tab?.id) return undefined;
+
+  await saveFlowTargetTab(tab);
+  return tab;
+}
+
+async function saveFlowTargetTab(tab: chrome.tabs.Tab): Promise<void> {
+  if (!tab.id) return;
+
+  await saveTargetTab({
+    tabId: tab.id,
+    windowId: tab.windowId,
+    url: tab.url,
+    capturedAt: Date.now()
+  });
+}
+
+async function openControlWindow(): Promise<void> {
+  await chrome.windows.create({
+    url: chrome.runtime.getURL("src/popup/popup.html?mode=window"),
+    type: "popup",
+    width: 460,
+    height: 720,
+    focused: true
+  });
 }
 
 function runningState(activeItemId: string): RunnerState {

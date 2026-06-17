@@ -50,6 +50,13 @@ export type RunnerState = {
   error?: string;
 };
 
+export type FlowTargetTab = {
+  tabId: number;
+  windowId?: number;
+  url?: string;
+  capturedAt: number;
+};
+
 export type ParsedPrompt = {
   index: number;
   timestamp: string;

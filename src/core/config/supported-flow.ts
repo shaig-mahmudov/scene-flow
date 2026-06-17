@@ -33,5 +33,5 @@ export function isRunnableFlowProjectUrl(url: string | undefined): boolean {
 }
 
 export function supportedFlowUrlMessage(): string {
-  return "Open a specific Google Flow project in the active tab before starting the queue.";
+  return "Open a specific Google Flow project tab before starting, or open the Scene Flow window from that project tab.";
 }

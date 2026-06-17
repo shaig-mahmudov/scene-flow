@@ -1,12 +1,13 @@
 import { DEFAULT_SETTINGS, STORAGE_KEYS } from "../config/defaults";
 import { buildQueueTargetFilename } from "../download/filename-builder";
-import type { ParsedPrompt, QueueItem, RunnerState, SceneFlowSettings } from "./queue-types";
+import type { FlowTargetTab, ParsedPrompt, QueueItem, RunnerState, SceneFlowSettings } from "./queue-types";
 import { createInitialRunnerState } from "./queue-state-machine";
 
 type StorageShape = {
   [STORAGE_KEYS.settings]?: SceneFlowSettings;
   [STORAGE_KEYS.queue]?: QueueItem[];
   [STORAGE_KEYS.currentItem]?: QueueItem | null;
+  [STORAGE_KEYS.targetTab]?: FlowTargetTab | null;
   [STORAGE_KEYS.runnerState]?: RunnerState;
 };
 
@@ -44,6 +45,15 @@ export async function setCurrentItem(item: QueueItem | null): Promise<void> {
 export async function loadCurrentItem(): Promise<QueueItem | null> {
   const stored = (await chrome.storage.local.get(STORAGE_KEYS.currentItem)) as StorageShape;
   return stored[STORAGE_KEYS.currentItem] ?? null;
+}
+
+export async function saveTargetTab(targetTab: FlowTargetTab | null): Promise<void> {
+  await chrome.storage.local.set({ [STORAGE_KEYS.targetTab]: targetTab });
+}
+
+export async function loadTargetTab(): Promise<FlowTargetTab | null> {
+  const stored = (await chrome.storage.local.get(STORAGE_KEYS.targetTab)) as StorageShape;
+  return stored[STORAGE_KEYS.targetTab] ?? null;
 }
 
 export function createQueueItems(

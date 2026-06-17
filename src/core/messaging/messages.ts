@@ -28,6 +28,7 @@ export type ExtensionMessage =
   | { type: "QUEUE_STOP" }
   | { type: "QUEUE_RESET" }
   | { type: "QUEUE_RETRY_FAILED" }
+  | { type: "OPEN_CONTROL_WINDOW" }
   | { type: "QUEUE_STATE"; items: QueueItem[]; runnerState: RunnerState; settings: SceneFlowSettings }
   | { type: "SUBMIT_PROMPT"; item: QueueItem; maxWaitMs: number }
   | { type: "CHECK_RESULT_READY"; item: QueueItem }

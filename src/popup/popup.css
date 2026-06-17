@@ -83,6 +83,16 @@ button:disabled {
   gap: 12px;
 }
 
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.header-actions button {
+  min-width: 72px;
+  padding: 0 10px;
+}
+
 h1,
 h2,
 p {

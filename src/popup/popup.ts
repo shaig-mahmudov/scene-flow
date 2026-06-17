@@ -23,6 +23,7 @@ getElement<HTMLButtonElement>("stopButton").addEventListener("click", () => send
 getElement<HTMLButtonElement>("retryFailedButton").addEventListener("click", () => sendControl("QUEUE_RETRY_FAILED"));
 getElement<HTMLButtonElement>("resetButton").addEventListener("click", () => sendControl("QUEUE_RESET"));
 getElement<HTMLButtonElement>("refreshButton").addEventListener("click", renderState);
+getElement<HTMLButtonElement>("openWindowButton").addEventListener("click", openControlWindow);
 fileInput.addEventListener("change", handleFileUpload);
 
 for (const input of [outputFolderInput, cooldownInput, maxWaitInput, retryInput, extensionInput]) {
@@ -101,6 +102,21 @@ async function sendControl(
     await renderState();
   } catch (error) {
     showMessage(error instanceof Error ? error.message : "Could not send command to the extension.", true);
+  }
+}
+
+async function openControlWindow(): Promise<void> {
+  try {
+    const response = (await chrome.runtime.sendMessage({ type: "OPEN_CONTROL_WINDOW" })) as
+      | { ok?: boolean; error?: string }
+      | undefined;
+    if (response?.ok === false) {
+      showMessage(response.error ?? "Could not open the persistent window.", true);
+      return;
+    }
+    showMessage("Persistent window opened.");
+  } catch (error) {
+    showMessage(error instanceof Error ? error.message : "Could not open the persistent window.", true);
   }
 }
 
