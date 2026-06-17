@@ -12,6 +12,7 @@ export type ContentAutomationResult =
       menuClickPoint?: ViewportClickPoint;
       sizeClickPoint?: ViewportClickPoint;
       mediaUrl?: string;
+      downloadId?: number;
     }
   | { ok: false; itemId?: string; error: string };
 

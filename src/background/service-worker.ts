@@ -13,7 +13,13 @@ import {
 } from "../core/queue/queue-store";
 import { createInitialRunnerState, updateItemStatus } from "../core/queue/queue-state-machine";
 import type { QueueItem, RunnerState, SceneFlowSettings } from "../core/queue/queue-types";
-import { installDownloadRouter } from "./download-router";
+import {
+  installDownloadRouter,
+  watchDownloadCompletion,
+  watchRoutedDownload,
+  type DownloadVerificationResult,
+  type DownloadWatch
+} from "./download-router";
 
 let runnerActive = false;
 
@@ -171,10 +177,24 @@ async function processItem(item: QueueItem): Promise<void> {
   const currentItem = (await loadQueue()).find((candidate) => candidate.id === item.id);
   if (currentItem) await setCurrentItem(currentItem);
 
+  let downloadWatch = watchRoutedDownload(item, downloadWaitMs(settings));
   const downloadResult = await triggerFlowDownload(item, readyResult);
   if (!downloadResult.ok) {
+    downloadWatch.cancel();
     await setCurrentItem(null);
     await handleFailure(item.id, downloadResult.error, settings);
+    return;
+  }
+
+  if (downloadResult.downloadId !== undefined) {
+    downloadWatch.cancel();
+    downloadWatch = watchDownloadCompletion(downloadResult.downloadId, downloadWaitMs(settings), item.targetFilename);
+  }
+
+  const verifiedDownload = await waitForVerifiedDownload(downloadWatch);
+  if (!verifiedDownload.ok) {
+    await setCurrentItem(null);
+    await handleFailure(item.id, verifiedDownload.error, settings);
     return;
   }
 
@@ -260,13 +280,13 @@ async function downloadNewestMediaDirectly(item: QueueItem): Promise<ContentAuto
   }
 
   try {
-    await chrome.downloads.download({
+    const downloadId = await chrome.downloads.download({
       url: sourceResult.mediaUrl,
       filename: item.targetFilename,
       conflictAction: "uniquify",
       saveAs: false
     });
-    return { ok: true, itemId: item.id };
+    return { ok: true, itemId: item.id, downloadId };
   } catch (error) {
     return {
       ok: false,
@@ -328,6 +348,22 @@ async function handleFailure(itemId: string, error: string, settings: SceneFlowS
   }
 
   await patchQueueItem(itemId, (current) => updateItemStatus(current, "pending", { error }));
+}
+
+async function waitForVerifiedDownload(watch: DownloadWatch): Promise<DownloadVerificationResult> {
+  while (true) {
+    const result = await Promise.race([
+      watch.done,
+      sleep(1000).then(() => undefined)
+    ]);
+    if (result) return result;
+
+    const state = await loadRunnerState();
+    if (state.stopRequested) {
+      watch.cancel();
+      return { ok: false, error: "Queue was stopped while verifying the download." };
+    }
+  }
 }
 
 async function markFailureForRetry(itemId: string, error: string): Promise<boolean> {
@@ -561,4 +597,8 @@ function sleep(ms: number): Promise<void> {
 
 function retryDelayMs(settings: SceneFlowSettings): number {
   return Math.max(3000, settings.cooldownSeconds * 1000);
+}
+
+function downloadWaitMs(settings: SceneFlowSettings): number {
+  return Math.max(60_000, settings.maxWaitMinutesPerPrompt * 60 * 1000);
 }
