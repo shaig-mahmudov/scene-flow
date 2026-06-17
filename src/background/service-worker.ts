@@ -113,6 +113,9 @@ async function runQueue(): Promise<void> {
       const item = queue.find((candidate) => candidate.status === "pending" || candidate.status === "paused");
       if (!item) {
         await saveRunnerState({ ...state, status: "completed", activeItemId: undefined, updatedAt: Date.now() });
+        if (queue.length > 0 && queue.every((candidate) => candidate.status === "done")) {
+          await notifyQueueCompleted(queue);
+        }
         return;
       }
 
@@ -349,6 +352,22 @@ async function cancelRemaining(): Promise<void> {
   );
   await setCurrentItem(null);
   await saveRunnerState(createInitialRunnerState("idle"));
+}
+
+async function notifyQueueCompleted(queue: QueueItem[]): Promise<void> {
+  const doneCount = queue.filter((item) => item.status === "done").length;
+  const itemLabel = doneCount === 1 ? "task" : "tasks";
+
+  try {
+    await chrome.notifications.create("scene-flow-queue-completed", {
+      type: "basic",
+      iconUrl: chrome.runtime.getURL("icons/icon-128.png"),
+      title: "Scene Flow completed",
+      message: `All ${doneCount} ${itemLabel} are done.`
+    });
+  } catch {
+    // Notifications are nice-to-have; queue completion should remain successful if Chrome suppresses one.
+  }
 }
 
 async function sendToActiveFlowTab(message: ExtensionMessage): Promise<ContentAutomationResult> {
