@@ -1,4 +1,4 @@
-import { loadCurrentItem, setCurrentItem } from "../core/queue/queue-store";
+import { loadCurrentItem, loadQueue, saveQueue, setCurrentItem } from "../core/queue/queue-store";
 import type { QueueItem } from "../core/queue/queue-types";
 
 export type DownloadVerificationResult =
@@ -43,6 +43,7 @@ async function routeDownload(
     downloadId: downloadItem.id,
     filename: item.targetFilename
   });
+  await saveDownloadMetadata(item.id, downloadItem.id);
 }
 
 export function watchRoutedDownload(item: QueueItem, timeoutMs: number): DownloadWatch {
@@ -180,4 +181,19 @@ async function resolveCompletedDownload(downloadId: number): Promise<DownloadVer
     downloadId,
     filename: download.filename
   };
+}
+
+async function saveDownloadMetadata(itemId: string, downloadId: number, downloadedFilename?: string): Promise<void> {
+  const queue = await loadQueue();
+  await saveQueue(
+    queue.map((item) =>
+      item.id === itemId
+        ? {
+            ...item,
+            downloadId,
+            downloadedFilename: downloadedFilename ?? item.downloadedFilename
+          }
+        : item
+    )
+  );
 }

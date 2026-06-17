@@ -32,6 +32,8 @@ export type QueueItem = {
   outputFolder: string;
   expectedExtension: ExpectedExtension;
   targetFilename: string;
+  downloadId?: number;
+  downloadedFilename?: string;
   status: QueueStatus;
   attempts: number;
   maxRetries: number;

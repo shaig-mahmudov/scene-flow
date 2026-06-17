@@ -12,7 +12,7 @@ import {
   setCurrentItem
 } from "../core/queue/queue-store";
 import { createInitialRunnerState, updateItemStatus } from "../core/queue/queue-state-machine";
-import type { QueueItem, RunnerState, SceneFlowSettings } from "../core/queue/queue-types";
+import type { QueueItem, QueueStatus, RunnerState, SceneFlowSettings } from "../core/queue/queue-types";
 import {
   installDownloadRouter,
   watchDownloadCompletion,
@@ -85,7 +85,13 @@ async function retryFailedItems(): Promise<void> {
   await saveQueue(
     queue.map((item) =>
       item.status === "failed" || item.status === "cancelled"
-        ? updateItemStatus(item, "pending", { attempts: 0, error: undefined, completedAt: undefined })
+        ? updateItemStatus(item, "pending", {
+            attempts: 0,
+            error: undefined,
+            completedAt: undefined,
+            downloadId: undefined,
+            downloadedFilename: undefined
+          })
         : item
     )
   );
@@ -126,7 +132,7 @@ async function runQueue(): Promise<void> {
         return;
       }
 
-      const item = queue.find((candidate) => candidate.status === "pending" || candidate.status === "paused");
+      const item = queue.find(isRunnableQueueItem);
       if (!item) {
         await saveRunnerState({ ...state, status: "completed", activeItemId: undefined, updatedAt: Date.now() });
         if (queue.length > 0 && queue.every((candidate) => candidate.status === "done")) {
@@ -144,12 +150,32 @@ async function runQueue(): Promise<void> {
 
 async function processItem(item: QueueItem): Promise<void> {
   const settings = await loadSettings();
-  await patchQueueItem(item.id, (current) =>
-    updateItemStatus(current, "running", { attempts: current.attempts + 1, error: undefined })
-  );
   await saveRunnerState(runningState(item.id));
 
   const maxWaitMs = settings.maxWaitMinutesPerPrompt * 60 * 1000;
+
+  if (item.status === "cooldown") {
+    await recoverCooldownItem(item, settings);
+    return;
+  }
+
+  if (item.status === "waiting_result") {
+    await waitForAndDownloadItem(item, settings, maxWaitMs);
+    return;
+  }
+
+  if (item.status === "downloading") {
+    await downloadReadyResult(item, settings, maxWaitMs);
+    return;
+  }
+
+  await patchQueueItem(item.id, (current) =>
+    updateItemStatus(current, "running", {
+      attempts: item.status === "running" ? current.attempts : current.attempts + 1,
+      error: undefined
+    })
+  );
+
   const submitResult = await sendToActiveFlowTab({ type: "SUBMIT_PROMPT", item, maxWaitMs });
   if (!submitResult.ok) {
     await handleFailure(item.id, submitResult.error, settings);
@@ -167,18 +193,52 @@ async function processItem(item: QueueItem): Promise<void> {
   }
 
   await patchQueueItem(item.id, (current) => updateItemStatus(current, "waiting_result"));
+  await waitForAndDownloadItem(item, settings, maxWaitMs);
+}
+
+async function waitForAndDownloadItem(item: QueueItem, settings: SceneFlowSettings, maxWaitMs: number): Promise<void> {
   const readyResult = await waitForResultReady(item, maxWaitMs);
   if (!readyResult.ok) {
     await handleFailure(item.id, readyResult.error, settings);
     return;
   }
 
+  await downloadReadyResult(item, settings, maxWaitMs, readyResult);
+}
+
+async function downloadReadyResult(
+  item: QueueItem,
+  settings: SceneFlowSettings,
+  maxWaitMs: number,
+  readyResult?: Extract<ContentAutomationResult, { ok: true }>
+): Promise<void> {
   await patchQueueItem(item.id, (current) => updateItemStatus(current, "downloading"));
   const currentItem = (await loadQueue()).find((candidate) => candidate.id === item.id);
   if (currentItem) await setCurrentItem(currentItem);
 
+  if (item.downloadId !== undefined) {
+    const verifiedDownload = await waitForVerifiedDownload(
+      watchDownloadCompletion(item.downloadId, downloadWaitMs(settings), item.targetFilename)
+    );
+    if (!verifiedDownload.ok) {
+      await setCurrentItem(null);
+      await handleFailure(item.id, verifiedDownload.error, settings);
+      return;
+    }
+
+    await finishVerifiedDownload(item, settings, verifiedDownload);
+    return;
+  }
+
+  const result = readyResult ?? (await waitForResultReady(item, maxWaitMs));
+  if (!result.ok) {
+    await setCurrentItem(null);
+    await handleFailure(item.id, result.error, settings);
+    return;
+  }
+
   let downloadWatch = watchRoutedDownload(item, downloadWaitMs(settings));
-  const downloadResult = await triggerFlowDownload(item, readyResult);
+  const downloadResult = await triggerFlowDownloadWhenReachable(item, result, maxWaitMs);
   if (!downloadResult.ok) {
     downloadWatch.cancel();
     await setCurrentItem(null);
@@ -187,6 +247,7 @@ async function processItem(item: QueueItem): Promise<void> {
   }
 
   if (downloadResult.downloadId !== undefined) {
+    await patchQueueItem(item.id, (current) => ({ ...current, downloadId: downloadResult.downloadId }));
     downloadWatch.cancel();
     downloadWatch = watchDownloadCompletion(downloadResult.downloadId, downloadWaitMs(settings), item.targetFilename);
   }
@@ -198,7 +259,21 @@ async function processItem(item: QueueItem): Promise<void> {
     return;
   }
 
-  await patchQueueItem(item.id, (current) => updateItemStatus(current, "cooldown"));
+  await finishVerifiedDownload(item, settings, verifiedDownload);
+}
+
+async function finishVerifiedDownload(
+  item: QueueItem,
+  settings: SceneFlowSettings,
+  verifiedDownload: Extract<DownloadVerificationResult, { ok: true }>
+): Promise<void> {
+  await patchQueueItem(item.id, (current) =>
+    updateItemStatus(current, "cooldown", {
+      downloadId: verifiedDownload.downloadId,
+      downloadedFilename: verifiedDownload.filename,
+      error: undefined
+    })
+  );
   await sleep(settings.cooldownSeconds * 1000);
 
   const state = await loadRunnerState();
@@ -209,6 +284,28 @@ async function processItem(item: QueueItem): Promise<void> {
   if (state.pauseRequested) {
     await patchQueueItem(item.id, (current) => updateItemStatus(current, "done"));
     await saveRunnerState({ ...state, status: "paused", activeItemId: undefined, updatedAt: Date.now() });
+    return;
+  }
+
+  await patchQueueItem(item.id, (current) => updateItemStatus(current, "done"));
+}
+
+async function recoverCooldownItem(item: QueueItem, settings: SceneFlowSettings): Promise<void> {
+  if (item.error && item.attempts <= item.maxRetries) {
+    await sleep(retryDelayMs(settings));
+
+    const state = await loadRunnerState();
+    if (state.stopRequested) {
+      await cancelRemaining();
+      return;
+    }
+    if (state.pauseRequested) {
+      await patchQueueItem(item.id, (current) => updateItemStatus(current, "paused", { error: item.error }));
+      await saveRunnerState({ ...state, status: "paused", activeItemId: undefined, updatedAt: Date.now() });
+      return;
+    }
+
+    await patchQueueItem(item.id, (current) => updateItemStatus(current, "pending", { error: item.error }));
     return;
   }
 
@@ -248,6 +345,32 @@ async function triggerFlowDownload(
   }
 
   return downloadNewestMediaDirectly(item);
+}
+
+async function triggerFlowDownloadWhenReachable(
+  item: QueueItem,
+  readyResult: Extract<ContentAutomationResult, { ok: true }>,
+  maxWaitMs: number
+): Promise<ContentAutomationResult> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < maxWaitMs) {
+    const state = await loadRunnerState();
+    if (state.stopRequested) {
+      return { ok: false, itemId: item.id, error: "Queue was stopped while preparing the download." };
+    }
+
+    const result = await triggerFlowDownload(item, readyResult);
+    if (result.ok || !isTemporaryFlowCommunicationError(result.error)) return result;
+
+    await sleep(2500);
+  }
+
+  return {
+    ok: false,
+    itemId: item.id,
+    error: "Timed out waiting for Google Flow to respond before downloading."
+  };
 }
 
 async function selectOriginalDownloadSize(item: QueueItem): Promise<ContentAutomationResult> {
@@ -306,7 +429,13 @@ async function waitForResultReady(item: QueueItem, maxWaitMs: number): Promise<C
     if (state.stopRequested) return { ok: false, itemId: item.id, error: "Queue was stopped while waiting for the result." };
 
     const result = await sendToActiveFlowTab({ type: "CHECK_RESULT_READY", item });
-    if (!result.ok) return result;
+    if (!result.ok) {
+      if (isTemporaryFlowCommunicationError(result.error)) {
+        await sleep(2500);
+        continue;
+      }
+      return result;
+    }
     if (result.ready) {
       return {
         ok: true,
@@ -371,8 +500,8 @@ async function markFailureForRetry(itemId: string, error: string): Promise<boole
   await patchQueueItem(itemId, (current) => {
     retry = current.attempts <= current.maxRetries;
     return retry
-      ? updateItemStatus(current, "cooldown", { error })
-      : updateItemStatus(current, "failed", { error });
+      ? updateItemStatus(current, "cooldown", { error, downloadId: undefined, downloadedFilename: undefined })
+      : updateItemStatus(current, "failed", { error, downloadId: undefined, downloadedFilename: undefined });
   });
   return retry;
 }
@@ -380,6 +509,18 @@ async function markFailureForRetry(itemId: string, error: string): Promise<boole
 async function patchQueueItem(itemId: string, patcher: (item: QueueItem) => QueueItem): Promise<void> {
   const queue = await loadQueue();
   await saveQueue(queue.map((item) => (item.id === itemId ? patcher(item) : item)));
+}
+
+function isRunnableQueueItem(item: QueueItem): boolean {
+  const runnableStatuses: QueueStatus[] = [
+    "pending",
+    "paused",
+    "running",
+    "waiting_result",
+    "downloading",
+    "cooldown"
+  ];
+  return runnableStatuses.includes(item.status);
 }
 
 async function cancelRemaining(): Promise<void> {
@@ -601,4 +742,8 @@ function retryDelayMs(settings: SceneFlowSettings): number {
 
 function downloadWaitMs(settings: SceneFlowSettings): number {
   return Math.max(60_000, settings.maxWaitMinutesPerPrompt * 60 * 1000);
+}
+
+function isTemporaryFlowCommunicationError(error: string): boolean {
+  return /communicate|receiving end|message port|context invalidated|frame was removed|no tab with id/i.test(error);
 }
