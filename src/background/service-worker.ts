@@ -14,20 +14,23 @@ import {
 import { createInitialRunnerState, updateItemStatus } from "../core/queue/queue-state-machine";
 import type { QueueItem, QueueStatus, RunnerState, SceneFlowSettings } from "../core/queue/queue-types";
 import {
+  checkDownloadCompletion,
   installDownloadRouter,
-  watchDownloadCompletion,
-  watchRoutedDownload,
-  type DownloadVerificationResult,
-  type DownloadWatch
+  type DownloadVerificationResult
 } from "./download-router";
 
 const RUNNER_ALARM_NAME = "scene-flow-runner-watchdog";
-const RUNNER_ALARM_PERIOD_MINUTES = 0.5;
-const RUNNER_ALARM_DELAY_MINUTES = 0.5;
+const RUNNER_ALARM_PERIOD_MINUTES = 1.0;
+const RUNNER_ALARM_DELAY_MINUTES = 1.0;
+const CHECKPOINT_POLL_DELAY_MS = 30_000;
+const DOWNLOAD_ROUTE_WAIT_MS = 60_000;
 
 let runnerActive = false;
 
-installDownloadRouter();
+type ProcessResult = "continue" | "defer";
+type DeferredResult = { defer: true };
+
+installDownloadRouter(resumeSavedQueueIfNeeded);
 
 chrome.runtime.onInstalled.addListener(() => {
   void ensureInitialState().then(resumeSavedQueueIfNeeded);
@@ -40,6 +43,12 @@ chrome.runtime.onStartup.addListener(() => {
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== RUNNER_ALARM_NAME) return;
   void resumeSavedQueueIfNeeded();
+});
+
+chrome.downloads.onChanged.addListener((delta) => {
+  if (delta.state?.current === "complete" || delta.state?.current === "interrupted") {
+    void resumeSavedQueueIfNeeded();
+  }
 });
 
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
@@ -105,7 +114,14 @@ async function retryFailedItems(): Promise<void> {
             error: undefined,
             completedAt: undefined,
             downloadId: undefined,
-            downloadedFilename: undefined
+            downloadedFilename: undefined,
+            checkpointStartedAt: undefined,
+            nextRunAt: undefined,
+            submittedAt: undefined,
+            initialResultCount: undefined,
+            initialMediaCount: undefined,
+            initialMediaSource: undefined,
+            downloadRequestedAt: undefined
           })
         : item
     )
@@ -156,7 +172,20 @@ async function runQueue(): Promise<void> {
         return;
       }
 
-      await processItem(item);
+      try {
+        const result = await processItem(item);
+        if (result === "defer") return;
+      } catch (error) {
+        await saveRunnerState({
+          ...state,
+          status: "paused",
+          activeItemId: item.id,
+          pauseRequested: true,
+          error: error instanceof Error ? error.message : "An unexpected background error occurred.",
+          updatedAt: Date.now()
+        });
+        return;
+      }
     }
   } finally {
     runnerActive = false;
@@ -164,69 +193,79 @@ async function runQueue(): Promise<void> {
   }
 }
 
-async function processItem(item: QueueItem): Promise<void> {
+async function processItem(item: QueueItem): Promise<ProcessResult> {
   const settings = await loadSettings();
   await saveRunnerState(runningState(item.id));
 
   const maxWaitMs = settings.maxWaitMinutesPerPrompt * 60 * 1000;
 
+  if (isCheckpointWaiting(item)) {
+    scheduleRunnerWake((item.nextRunAt ?? Date.now()) - Date.now());
+    return "defer";
+  }
+
   if (item.status === "cooldown") {
-    await recoverCooldownItem(item, settings);
-    return;
+    return recoverCooldownItem(item);
   }
 
   if (item.status === "waiting_result") {
-    await waitForAndDownloadItem(item, settings, maxWaitMs);
-    return;
+    return waitForAndDownloadItem(item, settings, maxWaitMs);
   }
 
   if (item.status === "downloading") {
-    await downloadReadyResult(item, settings, maxWaitMs);
-    return;
+    return downloadReadyResult(item, settings, maxWaitMs);
   }
 
   await patchQueueItem(item.id, (current) =>
     updateItemStatus(current, "running", {
       attempts: item.status === "running" ? current.attempts : current.attempts + 1,
-      error: undefined
+      error: undefined,
+      nextRunAt: undefined,
+      downloadRequestedAt: undefined
     })
   );
 
   const submitResult = await sendToActiveFlowTab({ type: "SUBMIT_PROMPT", item, maxWaitMs });
   if (!submitResult.ok) {
     await handleFailure(item.id, submitResult.error, settings);
-    return;
+    return "defer";
   }
   if (!submitResult.clickPoint) {
     await handleFailure(item.id, "Could not locate the active Flow send button.", settings);
-    return;
+    return "defer";
   }
 
   const clickResult = await clickActiveFlowTabAt(submitResult.clickPoint);
   if (!clickResult.ok) {
     await handleFailure(item.id, clickResult.error, settings);
-    return;
+    return "defer";
   }
 
   await patchQueueItem(item.id, (current) =>
     updateItemStatus(current, "waiting_result", {
       submittedAt: submitResult.submittedAt,
       initialResultCount: submitResult.initialResultCount,
-      initialMediaCount: submitResult.initialMediaCount
+      initialMediaCount: submitResult.initialMediaCount,
+      initialMediaSource: submitResult.initialMediaSource,
+      nextRunAt: undefined
     })
   );
-  const waitingItem = (await loadQueue()).find((candidate) => candidate.id === item.id) ?? item;
-  await waitForAndDownloadItem(waitingItem, settings, maxWaitMs);
+  return "continue";
 }
 
-async function waitForAndDownloadItem(item: QueueItem, settings: SceneFlowSettings, maxWaitMs: number): Promise<void> {
-  const readyResult = await waitForResultReady(item, maxWaitMs);
+async function waitForAndDownloadItem(
+  item: QueueItem,
+  settings: SceneFlowSettings,
+  maxWaitMs: number
+): Promise<ProcessResult> {
+  const readyResult = await checkResultReadyCheckpoint(item, maxWaitMs);
+  if (isDeferredResult(readyResult)) return "defer";
   if (!readyResult.ok) {
     await handleFailure(item.id, readyResult.error, settings);
-    return;
+    return "defer";
   }
 
-  await downloadReadyResult(item, settings, maxWaitMs, readyResult);
+  return downloadReadyResult(item, settings, maxWaitMs, readyResult);
 }
 
 async function downloadReadyResult(
@@ -234,105 +273,118 @@ async function downloadReadyResult(
   settings: SceneFlowSettings,
   maxWaitMs: number,
   readyResult?: Extract<ContentAutomationResult, { ok: true }>
-): Promise<void> {
-  await patchQueueItem(item.id, (current) => updateItemStatus(current, "downloading"));
-  const currentItem = (await loadQueue()).find((candidate) => candidate.id === item.id);
-  if (currentItem) await setCurrentItem(currentItem);
+): Promise<ProcessResult> {
+  if (item.status !== "downloading") {
+    await patchQueueItem(item.id, (current) => updateItemStatus(current, "downloading", { nextRunAt: undefined }));
+    item = (await loadQueue()).find((candidate) => candidate.id === item.id) ?? item;
+  }
+
+  if (isCheckpointTimedOut(item, downloadWaitMs(settings))) {
+    await setCurrentItem(null);
+    await handleFailure(item.id, "Timed out waiting for Chrome to finish the download.", settings);
+    return "defer";
+  }
 
   if (item.downloadId !== undefined) {
-    const verifiedDownload = await waitForVerifiedDownload(
-      watchDownloadCompletion(item.downloadId, downloadWaitMs(settings), item.targetFilename)
-    );
+    const verifiedDownload = await checkDownloadCompletion(item.downloadId);
+    if (verifiedDownload === null) {
+      await scheduleItemResume(item.id, CHECKPOINT_POLL_DELAY_MS);
+      return "defer";
+    }
     if (!verifiedDownload.ok) {
       await setCurrentItem(null);
       await handleFailure(item.id, verifiedDownload.error, settings);
-      return;
+      return "defer";
     }
 
-    await finishVerifiedDownload(item, settings, verifiedDownload);
-    return;
+    return finishVerifiedDownload(item, settings, verifiedDownload);
   }
 
-  const result = readyResult ?? (await waitForResultReady(item, maxWaitMs));
+  if (item.downloadRequestedAt && Date.now() - item.downloadRequestedAt < DOWNLOAD_ROUTE_WAIT_MS) {
+    await scheduleItemResume(item.id, CHECKPOINT_POLL_DELAY_MS);
+    return "defer";
+  }
+  if (item.downloadRequestedAt) {
+    await setCurrentItem(null);
+    await patchQueueItem(item.id, (current) => ({
+      ...current,
+      downloadRequestedAt: undefined,
+      nextRunAt: undefined
+    }));
+    item = (await loadQueue()).find((candidate) => candidate.id === item.id) ?? item;
+  }
+
+  const result = readyResult ?? (await checkResultReadyCheckpoint(item, maxWaitMs));
+  if (isDeferredResult(result)) return "defer";
   if (!result.ok) {
     await setCurrentItem(null);
     await handleFailure(item.id, result.error, settings);
-    return;
+    return "defer";
   }
 
-  let downloadWatch = watchRoutedDownload(item, downloadWaitMs(settings));
-  const downloadResult = await triggerFlowDownloadWhenReachable(item, result, maxWaitMs);
+  const currentItem = (await loadQueue()).find((candidate) => candidate.id === item.id) ?? item;
+  await setCurrentItem(currentItem);
+
+  const downloadResult = await triggerFlowDownload(item, result);
   if (!downloadResult.ok) {
-    downloadWatch.cancel();
     await setCurrentItem(null);
+    if (isTemporaryFlowCommunicationError(downloadResult.error)) {
+      await scheduleItemResume(item.id, CHECKPOINT_POLL_DELAY_MS);
+      return "defer";
+    }
     await handleFailure(item.id, downloadResult.error, settings);
-    return;
+    return "defer";
   }
 
   if (downloadResult.downloadId !== undefined) {
     await patchQueueItem(item.id, (current) => ({ ...current, downloadId: downloadResult.downloadId }));
-    downloadWatch.cancel();
-    downloadWatch = watchDownloadCompletion(downloadResult.downloadId, downloadWaitMs(settings), item.targetFilename);
+    return "continue";
   }
 
-  const verifiedDownload = await waitForVerifiedDownload(downloadWatch);
-  if (!verifiedDownload.ok) {
-    await setCurrentItem(null);
-    await handleFailure(item.id, verifiedDownload.error, settings);
-    return;
-  }
-
-  await finishVerifiedDownload(item, settings, verifiedDownload);
+  await patchQueueItem(item.id, (current) => ({
+    ...current,
+    downloadRequestedAt: Date.now(),
+    nextRunAt: Date.now() + CHECKPOINT_POLL_DELAY_MS
+  }));
+  return "defer";
 }
 
 async function finishVerifiedDownload(
   item: QueueItem,
   settings: SceneFlowSettings,
   verifiedDownload: Extract<DownloadVerificationResult, { ok: true }>
-): Promise<void> {
+): Promise<ProcessResult> {
+  const cooldownMs = settings.cooldownSeconds * 1000;
   await patchQueueItem(item.id, (current) =>
     updateItemStatus(current, "cooldown", {
       downloadId: verifiedDownload.downloadId,
       downloadedFilename: verifiedDownload.filename,
-      error: undefined
+      error: undefined,
+      downloadRequestedAt: undefined,
+      nextRunAt: Date.now() + cooldownMs
     })
   );
-  await sleep(settings.cooldownSeconds * 1000);
-
-  const state = await loadRunnerState();
-  if (state.stopRequested) {
-    await cancelRemaining();
-    return;
-  }
-  if (state.pauseRequested) {
-    await patchQueueItem(item.id, (current) => updateItemStatus(current, "done"));
-    await saveRunnerState({ ...state, status: "paused", activeItemId: undefined, updatedAt: Date.now() });
-    return;
-  }
-
-  await patchQueueItem(item.id, (current) => updateItemStatus(current, "done"));
+  await setCurrentItem(null);
+  if (cooldownMs > 0) scheduleRunnerWake(cooldownMs);
+  return cooldownMs > 0 ? "defer" : "continue";
 }
 
-async function recoverCooldownItem(item: QueueItem, settings: SceneFlowSettings): Promise<void> {
+async function recoverCooldownItem(item: QueueItem): Promise<ProcessResult> {
+  if (isCheckpointWaiting(item)) return "defer";
+
   if (item.error && item.attempts <= item.maxRetries) {
-    await sleep(retryDelayMs(settings));
-
-    const state = await loadRunnerState();
-    if (state.stopRequested) {
-      await cancelRemaining();
-      return;
-    }
-    if (state.pauseRequested) {
-      await patchQueueItem(item.id, (current) => updateItemStatus(current, "paused", { error: item.error }));
-      await saveRunnerState({ ...state, status: "paused", activeItemId: undefined, updatedAt: Date.now() });
-      return;
-    }
-
-    await patchQueueItem(item.id, (current) => updateItemStatus(current, "pending", { error: item.error }));
-    return;
+    await patchQueueItem(item.id, (current) =>
+      updateItemStatus(current, "pending", {
+        error: item.error,
+        nextRunAt: undefined,
+        downloadRequestedAt: undefined
+      })
+    );
+    return "continue";
   }
 
-  await patchQueueItem(item.id, (current) => updateItemStatus(current, "done"));
+  await patchQueueItem(item.id, (current) => updateItemStatus(current, "done", { nextRunAt: undefined }));
+  return "continue";
 }
 
 async function triggerFlowDownload(
@@ -368,32 +420,6 @@ async function triggerFlowDownload(
   }
 
   return downloadNewestMediaDirectly(item);
-}
-
-async function triggerFlowDownloadWhenReachable(
-  item: QueueItem,
-  readyResult: Extract<ContentAutomationResult, { ok: true }>,
-  maxWaitMs: number
-): Promise<ContentAutomationResult> {
-  const startedAt = Date.now();
-
-  while (Date.now() - startedAt < maxWaitMs) {
-    const state = await loadRunnerState();
-    if (state.stopRequested) {
-      return { ok: false, itemId: item.id, error: "Queue was stopped while preparing the download." };
-    }
-
-    const result = await triggerFlowDownload(item, readyResult);
-    if (result.ok || !isTemporaryFlowCommunicationError(result.error)) return result;
-
-    await sleep(2500);
-  }
-
-  return {
-    ok: false,
-    itemId: item.id,
-    error: "Timed out waiting for Google Flow to respond before downloading."
-  };
 }
 
 async function selectOriginalDownloadSize(item: QueueItem): Promise<ContentAutomationResult> {
@@ -444,39 +470,44 @@ async function downloadNewestMediaDirectly(item: QueueItem): Promise<ContentAuto
   }
 }
 
-async function waitForResultReady(item: QueueItem, maxWaitMs: number): Promise<ContentAutomationResult> {
-  const startedAt = Date.now();
-
-  while (Date.now() - startedAt < maxWaitMs) {
-    const state = await loadRunnerState();
-    if (state.stopRequested) return { ok: false, itemId: item.id, error: "Queue was stopped while waiting for the result." };
-
-    const result = await sendToActiveFlowTab({ type: "CHECK_RESULT_READY", item });
-    if (!result.ok) {
-      if (isTemporaryFlowCommunicationError(result.error)) {
-        await sleep(2500);
-        continue;
-      }
-      return result;
-    }
-    if (result.ready) {
-      return {
-        ok: true,
-        itemId: item.id,
-        hasDownloadButton: result.hasDownloadButton,
-        downloadClickPoint: result.downloadClickPoint,
-        revealPoint: result.revealPoint
-      };
-    }
-
-    await sleep(1500);
+async function checkResultReadyCheckpoint(
+  item: QueueItem,
+  maxWaitMs: number
+): Promise<ContentAutomationResult | DeferredResult> {
+  const startedAt = item.submittedAt ?? item.checkpointStartedAt ?? item.startedAt ?? Date.now();
+  if (Date.now() - startedAt >= maxWaitMs) {
+    return { ok: false, itemId: item.id, error: "Timed out waiting for a ready result." };
   }
 
-  return { ok: false, itemId: item.id, error: "Timed out waiting for a ready result." };
+  const state = await loadRunnerState();
+  if (state.stopRequested) {
+    return { ok: false, itemId: item.id, error: "Queue was stopped while waiting for the result." };
+  }
+
+  const result = await sendToActiveFlowTab({ type: "CHECK_RESULT_READY", item });
+  if (!result.ok) {
+    if (isTemporaryFlowCommunicationError(result.error)) {
+      await scheduleItemResume(item.id, CHECKPOINT_POLL_DELAY_MS);
+      return { defer: true };
+    }
+    return result;
+  }
+  if (!result.ready) {
+    await scheduleItemResume(item.id, CHECKPOINT_POLL_DELAY_MS);
+    return { defer: true };
+  }
+
+  return {
+    ok: true,
+    itemId: item.id,
+    hasDownloadButton: result.hasDownloadButton,
+    downloadClickPoint: result.downloadClickPoint,
+    revealPoint: result.revealPoint
+  };
 }
 
 async function handleFailure(itemId: string, error: string, settings: SceneFlowSettings): Promise<void> {
-  const retry = await markFailureForRetry(itemId, error);
+  const retry = await markFailureForRetry(itemId, error, settings);
   if (!retry) {
     await saveRunnerState({
       ...(await loadRunnerState()),
@@ -489,49 +520,66 @@ async function handleFailure(itemId: string, error: string, settings: SceneFlowS
     });
     return;
   }
-
-  await sleep(retryDelayMs(settings));
-
-  const state = await loadRunnerState();
-  if (state.stopRequested) return;
-  if (state.pauseRequested) {
-    await patchQueueItem(itemId, (current) => updateItemStatus(current, "paused", { error }));
-    return;
-  }
-
-  await patchQueueItem(itemId, (current) => updateItemStatus(current, "pending", { error }));
 }
 
-async function waitForVerifiedDownload(watch: DownloadWatch): Promise<DownloadVerificationResult> {
-  while (true) {
-    const result = await Promise.race([
-      watch.done,
-      sleep(1000).then(() => undefined)
-    ]);
-    if (result) return result;
-
-    const state = await loadRunnerState();
-    if (state.stopRequested) {
-      watch.cancel();
-      return { ok: false, error: "Queue was stopped while verifying the download." };
-    }
-  }
-}
-
-async function markFailureForRetry(itemId: string, error: string): Promise<boolean> {
+async function markFailureForRetry(itemId: string, error: string, settings: SceneFlowSettings): Promise<boolean> {
   let retry = false;
+  let nextRunMs = 0;
   await patchQueueItem(itemId, (current) => {
+    const now = Date.now();
     retry = current.attempts <= current.maxRetries;
+    nextRunMs = retryDelayMs(settings);
     return retry
-      ? updateItemStatus(current, "cooldown", { error, downloadId: undefined, downloadedFilename: undefined })
-      : updateItemStatus(current, "failed", { error, downloadId: undefined, downloadedFilename: undefined });
+      ? updateItemStatus(current, "cooldown", {
+          error,
+          downloadId: undefined,
+          downloadedFilename: undefined,
+          downloadRequestedAt: undefined,
+          nextRunAt: now + nextRunMs
+        })
+      : updateItemStatus(current, "failed", {
+          error,
+          downloadId: undefined,
+          downloadedFilename: undefined,
+          downloadRequestedAt: undefined,
+          nextRunAt: undefined
+        });
   });
+  if (retry) {
+    scheduleRunnerWake(nextRunMs);
+  }
   return retry;
 }
 
 async function patchQueueItem(itemId: string, patcher: (item: QueueItem) => QueueItem): Promise<void> {
   const queue = await loadQueue();
   await saveQueue(queue.map((item) => (item.id === itemId ? patcher(item) : item)));
+}
+
+async function scheduleItemResume(itemId: string, delayMs: number): Promise<void> {
+  const nextRunAt = Date.now() + delayMs;
+  await patchQueueItem(itemId, (current) => ({ ...current, nextRunAt }));
+  scheduleRunnerWake(delayMs);
+}
+
+function isCheckpointWaiting(item: QueueItem): boolean {
+  return item.nextRunAt !== undefined && item.nextRunAt > Date.now();
+}
+
+function isCheckpointTimedOut(item: QueueItem, timeoutMs: number): boolean {
+  const startedAt = item.checkpointStartedAt ?? item.startedAt ?? item.createdAt;
+  return Date.now() - startedAt >= timeoutMs;
+}
+
+function isDeferredResult(result: ContentAutomationResult | DeferredResult): result is DeferredResult {
+  return "defer" in result;
+}
+
+function scheduleRunnerWake(delayMs: number): void {
+  const boundedDelay = Math.max(0, Math.min(delayMs, CHECKPOINT_POLL_DELAY_MS));
+  globalThis.setTimeout(() => {
+    void resumeSavedQueueIfNeeded();
+  }, boundedDelay);
 }
 
 function isRunnableQueueItem(item: QueueItem): boolean {
@@ -661,6 +709,7 @@ async function clickActiveFlowTabAt(point: { x: number; y: number }): Promise<Co
       x: point.x,
       y: point.y
     });
+    await sleep(50);
     await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
       type: "mousePressed",
       x: point.x,
@@ -669,6 +718,7 @@ async function clickActiveFlowTabAt(point: { x: number; y: number }): Promise<Co
       buttons: 1,
       clickCount: 1
     });
+    await sleep(50);
     await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
       type: "mouseReleased",
       x: point.x,
@@ -728,7 +778,7 @@ async function hoverActiveFlowTabAt(point: { x: number; y: number }): Promise<Co
 }
 
 async function getActiveFlowTab(): Promise<chrome.tabs.Tab | undefined> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   return tab;
 }
 

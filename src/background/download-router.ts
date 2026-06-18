@@ -16,8 +16,10 @@ type RoutedDownload = {
 };
 
 const routedDownloadWaiters = new Map<string, Set<(download: RoutedDownload) => void>>();
+let onDownloadRouted: (() => void | Promise<void>) | undefined;
 
-export function installDownloadRouter(): void {
+export function installDownloadRouter(onRouted?: () => void | Promise<void>): void {
+  onDownloadRouted = onRouted;
   chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
     void routeDownload(downloadItem, suggest);
     return true;
@@ -38,12 +40,13 @@ async function routeDownload(
     filename: item.targetFilename,
     conflictAction: "uniquify"
   });
-  await setCurrentItem(null);
   resolveRoutedDownload(item.id, {
     downloadId: downloadItem.id,
     filename: item.targetFilename
   });
-  await saveDownloadMetadata(item.id, downloadItem.id);
+  await saveDownloadMetadata(item.id, downloadItem.id, item.targetFilename);
+  await setCurrentItem(null);
+  await onDownloadRouted?.();
 }
 
 export function watchRoutedDownload(item: QueueItem, timeoutMs: number): DownloadWatch {
@@ -144,6 +147,10 @@ export function watchDownloadCompletion(
   };
 }
 
+export async function checkDownloadCompletion(downloadId: number): Promise<DownloadVerificationResult | null> {
+  return resolveCompletedDownload(downloadId);
+}
+
 function addRoutedDownloadWaiter(itemId: string, callback: (download: RoutedDownload) => void): () => void {
   const waiters = routedDownloadWaiters.get(itemId) ?? new Set();
   waiters.add(callback);
@@ -167,7 +174,12 @@ function resolveRoutedDownload(itemId: string, download: RoutedDownload): void {
 
 async function resolveCompletedDownload(downloadId: number): Promise<DownloadVerificationResult | null> {
   const [download] = await chrome.downloads.search({ id: downloadId });
-  if (!download) return null;
+  if (!download) {
+    return {
+      ok: false,
+      error: `Download ${downloadId} was removed or not found.`
+    };
+  }
   if (download.state === "interrupted") {
     return {
       ok: false,
@@ -191,7 +203,9 @@ async function saveDownloadMetadata(itemId: string, downloadId: number, download
         ? {
             ...item,
             downloadId,
-            downloadedFilename: downloadedFilename ?? item.downloadedFilename
+            downloadedFilename: downloadedFilename ?? item.downloadedFilename,
+            downloadRequestedAt: undefined,
+            nextRunAt: undefined
           }
         : item
     )
