@@ -13,7 +13,7 @@ import { getResultReadiness, waitForReadyResult } from "./result-watcher";
 import type { ContentAutomationResult, ExtensionMessage } from "../core/messaging/messages";
 
 let activeSubmission:
-  | { itemId: string; initialResultCount: number; initialMediaCount: number; submittedAt: number }
+  | { itemId: string; initialResultCount: number; initialMediaCount: number; initialMediaSource?: string; submittedAt: number }
   | undefined;
 
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
@@ -60,11 +60,13 @@ async function submitPrompt(message: Extract<ExtensionMessage, { type: "SUBMIT_P
   if (!input) return { ok: false, itemId: message.item.id, error: "Could not find the Google Flow prompt input." };
 
   setPromptText(input, message.item.prompt);
+  closeOpenOverlay(); // Clear any popups or tooltips that appeared after typing
   const initialResultCount = findResultCards().length;
   const initialMediaCount = findGeneratedMediaElements().length;
+  const initialMediaSource = findNewestGeneratedMediaSource();
   const button = await waitForGenerateButton(input);
   const submittedAt = Date.now();
-  activeSubmission = { itemId: message.item.id, initialResultCount, initialMediaCount, submittedAt };
+  activeSubmission = { itemId: message.item.id, initialResultCount, initialMediaCount, initialMediaSource, submittedAt };
 
   return {
     ok: true,
@@ -72,7 +74,8 @@ async function submitPrompt(message: Extract<ExtensionMessage, { type: "SUBMIT_P
     clickPoint: getElementCenter(button),
     submittedAt,
     initialResultCount,
-    initialMediaCount
+    initialMediaCount,
+    initialMediaSource
   };
 }
 
@@ -101,10 +104,13 @@ function checkResultReady(
   const initialMediaCount =
     message.item.initialMediaCount ??
     (activeSubmission?.itemId === message.item.id ? activeSubmission.initialMediaCount : 0);
+  const initialMediaSource =
+    message.item.initialMediaSource ??
+    (activeSubmission?.itemId === message.item.id ? activeSubmission.initialMediaSource : undefined);
   const submittedAt =
     message.item.submittedAt ??
     (activeSubmission?.itemId === message.item.id ? activeSubmission.submittedAt : Date.now());
-  const readiness = getResultReadiness({ initialResultCount, initialMediaCount, submittedAt });
+  const readiness = getResultReadiness({ initialResultCount, initialMediaCount, initialMediaSource, submittedAt });
   return {
     ok: true,
     itemId: message.item.id,
@@ -114,7 +120,8 @@ function checkResultReady(
     revealPoint: readiness.revealTarget ? getElementCenter(readiness.revealTarget) : undefined,
     submittedAt,
     initialResultCount,
-    initialMediaCount
+    initialMediaCount,
+    initialMediaSource
   };
 }
 
@@ -165,10 +172,13 @@ async function triggerDownload(
   const initialMediaCount =
     message.item.initialMediaCount ??
     (activeSubmission?.itemId === message.item.id ? activeSubmission.initialMediaCount : 0);
+  const initialMediaSource =
+    message.item.initialMediaSource ??
+    (activeSubmission?.itemId === message.item.id ? activeSubmission.initialMediaSource : undefined);
   const submittedAt =
     message.item.submittedAt ??
     (activeSubmission?.itemId === message.item.id ? activeSubmission.submittedAt : Date.now());
-  const readiness = getResultReadiness({ initialResultCount, initialMediaCount, submittedAt });
+  const readiness = getResultReadiness({ initialResultCount, initialMediaCount, initialMediaSource, submittedAt });
   if (!readiness.hasDownloadButton) {
     const button = findDownloadButtonNearNewestMedia();
     if (!button) return { ok: false, itemId: message.item.id, error: "Could not find a Flow download button." };
@@ -193,6 +203,7 @@ function closeOpenOverlay(): void {
   document.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Escape", code: "Escape" }));
 }
 
+
 function clickLikeUser(button: HTMLElement): void {
   button.scrollIntoView({ block: "center", inline: "center" });
   button.focus();
@@ -213,7 +224,13 @@ function clickLikeUser(button: HTMLElement): void {
 }
 
 function getElementCenter(element: HTMLElement): { x: number; y: number } {
+  element.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
   const rect = element.getBoundingClientRect();
+  
+  if (rect.width === 0 || rect.height === 0) {
+    throw new Error("Chrome window appears to be minimized or fully hidden by the OS. Cannot capture coordinates.");
+  }
+
   return {
     x: Math.round(rect.left + rect.width / 2),
     y: Math.round(rect.top + rect.height / 2)

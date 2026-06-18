@@ -264,6 +264,7 @@ function dispatchTextEvents(input: HTMLElement, prompt: string): void {
   input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: prompt }));
   input.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: " ", code: "Space" }));
   input.dispatchEvent(new Event("change", { bubbles: true }));
+  input.blur();
 }
 
 function dispatchPasteEvents(input: HTMLElement, prompt: string): void {

@@ -3,6 +3,7 @@ import {
   findGeneratedMediaElements,
   findLoadingIndicators,
   findNewestGeneratedMediaElement,
+  findNewestGeneratedMediaSource,
   findResultCards
 } from "./dom-selectors";
 
@@ -16,6 +17,7 @@ export type ResultReadiness = {
 export function getResultReadiness(options: {
   initialResultCount: number;
   initialMediaCount: number;
+  initialMediaSource?: string;
   submittedAt: number;
 }): ResultReadiness {
   const resultCount = findResultCards().length;
@@ -25,10 +27,14 @@ export function getResultReadiness(options: {
   const loading = findLoadingIndicators().length > 0;
   const downloadButton = findDownloadButtonForNewestResult();
   const revealTarget = findNewestGeneratedMediaElement() ?? findResultCards().at(-1) ?? null;
+  const newestMediaSource = findNewestGeneratedMediaSource();
+  const hasNewMediaSource = Boolean(newestMediaSource && newestMediaSource !== options.initialMediaSource);
   const stabilized = Date.now() - options.submittedAt > 5000;
+  const longStabilized = Date.now() - options.submittedAt > 12_000;
+  const hasVisibleResult = hasNewResult || hasNewMedia || hasNewMediaSource;
 
   return {
-    ready: !loading && (Boolean(downloadButton) || (stabilized && (hasNewResult || hasNewMedia))),
+    ready: Boolean(downloadButton) || (stabilized && (hasNewMedia || hasNewMediaSource)) || (!loading && stabilized && hasNewResult) || (longStabilized && hasVisibleResult),
     hasDownloadButton: Boolean(downloadButton),
     downloadButton,
     revealTarget
@@ -38,6 +44,7 @@ export function getResultReadiness(options: {
 export async function waitForReadyResult(options: {
   initialResultCount: number;
   initialMediaCount: number;
+  initialMediaSource?: string;
   submittedAt: number;
   timeoutMs: number;
 }): Promise<HTMLElement> {
