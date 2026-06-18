@@ -21,6 +21,37 @@ describe("queue state machine", () => {
     expect(done.completedAt).toEqual(expect.any(Number));
   });
 
+  it("moves the checkpoint timestamp only when the status changes", () => {
+    const item = makeItem();
+    const waiting = updateItemStatus(item, "waiting_result");
+    const stillWaiting = updateItemStatus(waiting, "waiting_result", { nextRunAt: 123 });
+    const downloading = updateItemStatus(stillWaiting, "downloading");
+
+    expect(waiting.checkpointStartedAt).toEqual(expect.any(Number));
+    expect(stillWaiting.checkpointStartedAt).toBe(waiting.checkpointStartedAt);
+    expect(downloading.checkpointStartedAt).toEqual(expect.any(Number));
+    expect(downloading.checkpointStartedAt).toBeGreaterThanOrEqual(waiting.checkpointStartedAt ?? 0);
+  });
+
+  it("allows checkpoint fields to be cleared when an item is retried", () => {
+    const item = updateItemStatus(makeItem(), "failed", {
+      nextRunAt: 123,
+      submittedAt: 456,
+      downloadRequestedAt: 789
+    });
+
+    const retried = updateItemStatus(item, "pending", {
+      nextRunAt: undefined,
+      submittedAt: undefined,
+      downloadRequestedAt: undefined
+    });
+
+    expect(retried.status).toBe("pending");
+    expect(retried.nextRunAt).toBeUndefined();
+    expect(retried.submittedAt).toBeUndefined();
+    expect(retried.downloadRequestedAt).toBeUndefined();
+  });
+
   it("finds pending or paused items", () => {
     const done = updateItemStatus(makeItem("done"), "done");
     const paused = updateItemStatus(makeItem("paused"), "paused");

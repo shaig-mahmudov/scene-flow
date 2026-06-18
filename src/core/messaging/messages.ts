@@ -10,6 +10,7 @@ export type ContentAutomationResult =
       submittedAt?: number;
       initialResultCount?: number;
       initialMediaCount?: number;
+      initialMediaSource?: string;
       revealPoint?: ViewportClickPoint;
       downloadClickPoint?: ViewportClickPoint;
       menuClickPoint?: ViewportClickPoint;

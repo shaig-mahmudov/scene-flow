@@ -15,10 +15,14 @@ export function updateItemStatus(
   patch: Partial<QueueItem> = {}
 ): QueueItem {
   const now = Date.now();
+  const statusChanged = item.status !== status;
   return {
     ...item,
     ...patch,
     status,
+    checkpointStartedAt: statusChanged
+      ? (patch.checkpointStartedAt ?? now)
+      : (patch.checkpointStartedAt ?? item.checkpointStartedAt),
     startedAt: status === "running" ? (item.startedAt ?? now) : (patch.startedAt ?? item.startedAt),
     completedAt:
       status === "done" || status === "failed" || status === "cancelled"

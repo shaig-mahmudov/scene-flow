@@ -39,9 +39,13 @@ export type QueueItem = {
   maxRetries: number;
   createdAt: number;
   startedAt?: number;
+  checkpointStartedAt?: number;
+  nextRunAt?: number;
   submittedAt?: number;
   initialResultCount?: number;
   initialMediaCount?: number;
+  initialMediaSource?: string;
+  downloadRequestedAt?: number;
   completedAt?: number;
   error?: string;
 };
