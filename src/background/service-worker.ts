@@ -22,7 +22,7 @@ import {
 const RUNNER_ALARM_NAME = "scene-flow-runner-watchdog";
 const RUNNER_ALARM_PERIOD_MINUTES = 1.0;
 const RUNNER_ALARM_DELAY_MINUTES = 1.0;
-const CHECKPOINT_POLL_DELAY_MS = 30_000;
+const CHECKPOINT_POLL_DELAY_MS = 2_000;
 const DOWNLOAD_ROUTE_WAIT_MS = 60_000;
 
 let runnerActive = false;

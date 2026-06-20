@@ -71,6 +71,7 @@ export function createQueueItems(
       safeTitle: prompt.safeTitle,
       prompt: prompt.prompt,
       outputFolder: settings.outputFolder,
+      subFolder: settings.subFolder,
       expectedExtension: settings.expectedExtension,
       status: "pending" as const,
       attempts: 0,

@@ -7,6 +7,7 @@ import { sanitizeFolder } from "../core/utils/sanitize";
 
 const fileInput = getElement<HTMLInputElement>("fileInput");
 const outputFolderInput = getElement<HTMLInputElement>("outputFolderInput");
+const subFolderInput = getElement<HTMLInputElement>("subFolderInput");
 const cooldownInput = getElement<HTMLInputElement>("cooldownInput");
 const maxWaitInput = getElement<HTMLInputElement>("maxWaitInput");
 const retryInput = getElement<HTMLInputElement>("retryInput");
@@ -26,7 +27,7 @@ getElement<HTMLButtonElement>("refreshButton").addEventListener("click", renderS
 getElement<HTMLButtonElement>("openWindowButton").addEventListener("click", openControlWindow);
 fileInput.addEventListener("change", handleFileUpload);
 
-for (const input of [outputFolderInput, cooldownInput, maxWaitInput, retryInput, extensionInput]) {
+for (const input of [outputFolderInput, subFolderInput, cooldownInput, maxWaitInput, retryInput, extensionInput]) {
   input.addEventListener("change", persistSettingsFromForm);
 }
 
@@ -77,6 +78,7 @@ async function handleFileUpload(): Promise<void> {
 async function persistSettingsFromForm(): Promise<SceneFlowSettings> {
   const settings: SceneFlowSettings = {
     outputFolder: sanitizeFolder(outputFolderInput.value || DEFAULT_SETTINGS.outputFolder),
+    subFolder: subFolderInput.value.trim() ? sanitizeFolder(subFolderInput.value) : "",
     cooldownSeconds: clampNumber(cooldownInput.valueAsNumber, 0, 3600, DEFAULT_SETTINGS.cooldownSeconds),
     maxWaitMinutesPerPrompt: clampNumber(maxWaitInput.valueAsNumber, 1, 180, DEFAULT_SETTINGS.maxWaitMinutesPerPrompt),
     maxRetries: clampNumber(retryInput.valueAsNumber, 0, 10, DEFAULT_SETTINGS.maxRetries),
@@ -158,6 +160,7 @@ function renderQueue(queue: QueueItem[]): void {
 
 function writeSettings(settings: SceneFlowSettings): void {
   outputFolderInput.value = settings.outputFolder;
+  subFolderInput.value = settings.subFolder || "";
   cooldownInput.value = String(settings.cooldownSeconds);
   maxWaitInput.value = String(settings.maxWaitMinutesPerPrompt);
   retryInput.value = String(settings.maxRetries);

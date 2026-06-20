@@ -1,10 +1,11 @@
 import type { ExpectedExtension, QueueItem } from "../queue/queue-types";
 import { sanitizeFolder, sanitizeSlug, sanitizeTimestamp } from "../utils/sanitize";
 
-export function buildTargetFilename(item: Pick<QueueItem, "index" | "safeTimestamp" | "safeTitle" | "outputFolder" | "expectedExtension">): string {
+export function buildTargetFilename(item: Pick<QueueItem, "index" | "safeTimestamp" | "safeTitle" | "outputFolder" | "subFolder" | "expectedExtension">): string {
   const index = String(item.index).padStart(3, "0");
   const title = item.safeTitle ? `_${item.safeTitle}` : "";
-  return `${sanitizeFolder(item.outputFolder)}/${index}_${item.safeTimestamp}${title}.${item.expectedExtension}`;
+  const sub = item.subFolder ? `${sanitizeFolder(item.subFolder)}/` : "";
+  return `${sanitizeFolder(item.outputFolder)}/${sub}${index}_${item.safeTimestamp}${title}.${item.expectedExtension}`;
 }
 
 export function buildQueueTargetFilename(input: {
@@ -12,6 +13,7 @@ export function buildQueueTargetFilename(input: {
   timestamp: string;
   title?: string;
   outputFolder: string;
+  subFolder?: string;
   expectedExtension: ExpectedExtension;
 }): string {
   return buildTargetFilename({
@@ -19,6 +21,7 @@ export function buildQueueTargetFilename(input: {
     safeTimestamp: sanitizeTimestamp(input.timestamp),
     safeTitle: input.title ? sanitizeSlug(input.title) : undefined,
     outputFolder: input.outputFolder,
+    subFolder: input.subFolder,
     expectedExtension: input.expectedExtension
   });
 }

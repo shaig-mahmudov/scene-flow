@@ -57,6 +57,32 @@ Second prompt.
   });
 
   it("rejects empty prompt bodies", () => {
-    expect(() => parseMarkdownPrompts("[00:00] empty")).toThrow("Prompt body is empty");
+    expect(() => parseMarkdownPrompts("[00:00]")).toThrow("Prompt body is empty");
+    expect(() => parseMarkdownPrompts("[00:00] a")).toThrow("Prompt body is too short");
+  });
+
+  it("parses custom same-line timestamp syntax with brackets and millisecond/range format", () => {
+    const result = parseMarkdownPrompts(`
+[00 : 00 : 130 -> 00 : 01 : 110] You are lying in bed.
+[00 : 01 : 390 -> 00 : 02 : 210] The room is dark;
+`);
+
+    expect(result.prompts).toHaveLength(2);
+    expect(result.prompts[0]).toMatchObject({
+      index: 1,
+      timestamp: "00:00:130 -> 00:01:110",
+      safeTimestamp: "00-00-130-00-01-110",
+      prompt: "You are lying in bed.",
+      title: undefined,
+      safeTitle: undefined
+    });
+    expect(result.prompts[1]).toMatchObject({
+      index: 2,
+      timestamp: "00:01:390 -> 00:02:210",
+      safeTimestamp: "00-01-390-00-02-210",
+      prompt: "The room is dark;",
+      title: undefined,
+      safeTitle: undefined
+    });
   });
 });

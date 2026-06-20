@@ -2,6 +2,7 @@ import type { SceneFlowSettings } from "../queue/queue-types";
 
 export const DEFAULT_SETTINGS: SceneFlowSettings = {
   outputFolder: "google-flow-images",
+  subFolder: "",
   cooldownSeconds: 10,
   maxWaitMinutesPerPrompt: 15,
   maxRetries: 1,

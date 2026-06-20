@@ -15,6 +15,7 @@ export type RunnerStatus = "idle" | "ready" | "running" | "paused" | "stopping" 
 
 export type SceneFlowSettings = {
   outputFolder: string;
+  subFolder?: string;
   cooldownSeconds: number;
   maxWaitMinutesPerPrompt: number;
   maxRetries: number;
@@ -30,6 +31,7 @@ export type QueueItem = {
   safeTitle?: string;
   prompt: string;
   outputFolder: string;
+  subFolder?: string;
   expectedExtension: ExpectedExtension;
   targetFilename: string;
   downloadId?: number;

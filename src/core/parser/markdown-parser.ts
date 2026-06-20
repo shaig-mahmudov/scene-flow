@@ -44,7 +44,19 @@ export function parseMarkdownPrompts(markdown: string): ParseResult {
 
     const bodyStart = entry.match.index + entry.match[0].length;
     const bodyEnd = matches[offset + 1]?.match.index ?? markdown.length;
-    const prompt = markdown.slice(bodyStart, bodyEnd).trim();
+    const body = markdown.slice(bodyStart, bodyEnd).trim();
+
+    let title: string | undefined;
+    let prompt: string;
+
+    if (body) {
+      title = entry.title?.trim();
+      prompt = body;
+    } else {
+      title = undefined;
+      prompt = entry.title?.trim() ?? "";
+    }
+
     if (!prompt) {
       throw new MarkdownParseError(`Prompt body is empty for ${normalizedTimestamp}.`);
     }
@@ -52,7 +64,6 @@ export function parseMarkdownPrompts(markdown: string): ParseResult {
       throw new MarkdownParseError(`Prompt body is too short for ${normalizedTimestamp}.`);
     }
 
-    const title = entry.title?.trim();
     const safeTitle = title ? sanitizeSlug(title) : undefined;
 
     return {

@@ -1,5 +1,9 @@
 export function sanitizeTimestamp(timestamp: string): string {
-  return timestamp.trim().replaceAll(":", "-");
+  return timestamp
+    .trim()
+    .replace(/[^a-zA-Z0-9]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 export function sanitizeSlug(value: string): string {
