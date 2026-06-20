@@ -37,8 +37,12 @@
           <input id="subFolderInput" type="text" autocomplete="off" />
         </label>
         <label>
-          Cooldown seconds
-          <input id="cooldownInput" type="number" min="0" max="3600" step="1" />
+          Cooldown min (sec)
+          <input id="cooldownMinInput" type="number" min="1" max="60" step="1" />
+        </label>
+        <label>
+          Cooldown max (sec)
+          <input id="cooldownMaxInput" type="number" min="1" max="60" step="1" />
         </label>
         <label>
           Max wait minutes
@@ -63,6 +67,7 @@
         <button id="startButton" type="button">Start</button>
         <button id="pauseButton" type="button">Pause</button>
         <button id="resumeButton" type="button">Resume</button>
+        <button id="skipButton" type="button">Skip Current</button>
         <button id="stopButton" type="button">Stop</button>
         <button id="retryFailedButton" type="button">Retry Failed</button>
         <button id="resetButton" type="button">Reset</button>

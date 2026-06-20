@@ -108,7 +108,10 @@ export function findNewestGeneratedMediaElement(): HTMLElement | null {
     findGeneratedMediaElements().sort((a, b) => {
       const aRect = a.getBoundingClientRect();
       const bRect = b.getBoundingClientRect();
-      return bRect.right + bRect.bottom - (aRect.right + aRect.bottom);
+      if (Math.abs(aRect.top - bRect.top) > 50) {
+        return aRect.top - bRect.top;
+      }
+      return aRect.left - bRect.left;
     })[0] ?? null
   );
 }

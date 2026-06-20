@@ -7,7 +7,8 @@ describe("queue state machine", () => {
     expect(createInitialRunnerState()).toMatchObject({
       status: "idle",
       pauseRequested: false,
-      stopRequested: false
+      stopRequested: false,
+      skipRequested: false
     });
   });
 

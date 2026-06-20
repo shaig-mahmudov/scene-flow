@@ -16,7 +16,8 @@ export type RunnerStatus = "idle" | "ready" | "running" | "paused" | "stopping" 
 export type SceneFlowSettings = {
   outputFolder: string;
   subFolder?: string;
-  cooldownSeconds: number;
+  cooldownMinSeconds: number;
+  cooldownMaxSeconds: number;
   maxWaitMinutesPerPrompt: number;
   maxRetries: number;
   expectedExtension: ExpectedExtension;
@@ -57,6 +58,7 @@ export type RunnerState = {
   activeItemId?: string;
   pauseRequested: boolean;
   stopRequested: boolean;
+  skipRequested: boolean;
   updatedAt: number;
   error?: string;
 };

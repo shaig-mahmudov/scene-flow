@@ -8,7 +8,8 @@ import { sanitizeFolder } from "../core/utils/sanitize";
 const fileInput = getElement<HTMLInputElement>("fileInput");
 const outputFolderInput = getElement<HTMLInputElement>("outputFolderInput");
 const subFolderInput = getElement<HTMLInputElement>("subFolderInput");
-const cooldownInput = getElement<HTMLInputElement>("cooldownInput");
+const cooldownMinInput = getElement<HTMLInputElement>("cooldownMinInput");
+const cooldownMaxInput = getElement<HTMLInputElement>("cooldownMaxInput");
 const maxWaitInput = getElement<HTMLInputElement>("maxWaitInput");
 const retryInput = getElement<HTMLInputElement>("retryInput");
 const extensionInput = getElement<HTMLSelectElement>("extensionInput");
@@ -20,6 +21,7 @@ const queueCount = getElement<HTMLElement>("queueCount");
 getElement<HTMLButtonElement>("startButton").addEventListener("click", () => sendControl("QUEUE_START"));
 getElement<HTMLButtonElement>("pauseButton").addEventListener("click", () => sendControl("QUEUE_PAUSE"));
 getElement<HTMLButtonElement>("resumeButton").addEventListener("click", () => sendControl("QUEUE_RESUME"));
+getElement<HTMLButtonElement>("skipButton").addEventListener("click", () => sendControl("QUEUE_SKIP_CURRENT"));
 getElement<HTMLButtonElement>("stopButton").addEventListener("click", () => sendControl("QUEUE_STOP"));
 getElement<HTMLButtonElement>("retryFailedButton").addEventListener("click", () => sendControl("QUEUE_RETRY_FAILED"));
 getElement<HTMLButtonElement>("resetButton").addEventListener("click", () => sendControl("QUEUE_RESET"));
@@ -27,7 +29,7 @@ getElement<HTMLButtonElement>("refreshButton").addEventListener("click", renderS
 getElement<HTMLButtonElement>("openWindowButton").addEventListener("click", openControlWindow);
 fileInput.addEventListener("change", handleFileUpload);
 
-for (const input of [outputFolderInput, subFolderInput, cooldownInput, maxWaitInput, retryInput, extensionInput]) {
+for (const input of [outputFolderInput, subFolderInput, cooldownMinInput, cooldownMaxInput, maxWaitInput, retryInput, extensionInput]) {
   input.addEventListener("change", persistSettingsFromForm);
 }
 
@@ -79,7 +81,8 @@ async function persistSettingsFromForm(): Promise<SceneFlowSettings> {
   const settings: SceneFlowSettings = {
     outputFolder: sanitizeFolder(outputFolderInput.value || DEFAULT_SETTINGS.outputFolder),
     subFolder: subFolderInput.value.trim() ? sanitizeFolder(subFolderInput.value) : "",
-    cooldownSeconds: clampNumber(cooldownInput.valueAsNumber, 0, 3600, DEFAULT_SETTINGS.cooldownSeconds),
+    cooldownMinSeconds: clampNumber(cooldownMinInput.valueAsNumber, 1, 60, DEFAULT_SETTINGS.cooldownMinSeconds),
+    cooldownMaxSeconds: clampNumber(cooldownMaxInput.valueAsNumber, 1, 60, DEFAULT_SETTINGS.cooldownMaxSeconds),
     maxWaitMinutesPerPrompt: clampNumber(maxWaitInput.valueAsNumber, 1, 180, DEFAULT_SETTINGS.maxWaitMinutesPerPrompt),
     maxRetries: clampNumber(retryInput.valueAsNumber, 0, 10, DEFAULT_SETTINGS.maxRetries),
     expectedExtension: extensionInput.value as ExpectedExtension
@@ -91,7 +94,14 @@ async function persistSettingsFromForm(): Promise<SceneFlowSettings> {
 }
 
 async function sendControl(
-  type: "QUEUE_START" | "QUEUE_PAUSE" | "QUEUE_RESUME" | "QUEUE_STOP" | "QUEUE_RESET" | "QUEUE_RETRY_FAILED"
+  type:
+    | "QUEUE_START"
+    | "QUEUE_PAUSE"
+    | "QUEUE_RESUME"
+    | "QUEUE_STOP"
+    | "QUEUE_SKIP_CURRENT"
+    | "QUEUE_RESET"
+    | "QUEUE_RETRY_FAILED"
 ): Promise<void> {
   try {
     await persistSettingsFromForm();
@@ -161,7 +171,8 @@ function renderQueue(queue: QueueItem[]): void {
 function writeSettings(settings: SceneFlowSettings): void {
   outputFolderInput.value = settings.outputFolder;
   subFolderInput.value = settings.subFolder || "";
-  cooldownInput.value = String(settings.cooldownSeconds);
+  cooldownMinInput.value = String(settings.cooldownMinSeconds);
+  cooldownMaxInput.value = String(settings.cooldownMaxSeconds);
   maxWaitInput.value = String(settings.maxWaitMinutesPerPrompt);
   retryInput.value = String(settings.maxRetries);
   extensionInput.value = settings.expectedExtension;
@@ -186,6 +197,8 @@ function commandMessage(type: string): string {
       return "Queue resumed.";
     case "QUEUE_STOP":
       return "Stop requested.";
+    case "QUEUE_SKIP_CURRENT":
+      return "Skip requested.";
     case "QUEUE_RESET":
       return "Queue reset.";
     case "QUEUE_RETRY_FAILED":

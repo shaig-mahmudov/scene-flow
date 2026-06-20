@@ -5,6 +5,7 @@ export function createInitialRunnerState(status: RunnerState["status"] = "idle")
     status,
     pauseRequested: false,
     stopRequested: false,
+    skipRequested: false,
     updatedAt: Date.now()
   };
 }

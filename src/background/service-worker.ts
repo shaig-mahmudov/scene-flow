@@ -61,7 +61,19 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
 });
 
 async function ensureInitialState(): Promise<void> {
-  const settings = await loadSettings();
+  let settings = await loadSettings();
+  if (settings && "cooldownSeconds" in settings) {
+    const rawSettings = settings as unknown as Record<string, unknown>;
+    const oldCooldown = rawSettings.cooldownSeconds as number;
+    if (oldCooldown !== undefined) {
+      settings = {
+        ...settings,
+        cooldownMinSeconds: oldCooldown,
+        cooldownMaxSeconds: oldCooldown
+      };
+      delete rawSettings.cooldownSeconds;
+    }
+  }
   await chrome.storage.local.set({
     "sceneFlow.settings": { ...DEFAULT_SETTINGS, ...settings }
   });
@@ -85,6 +97,10 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
       return { ok: true };
     case "QUEUE_STOP":
       await saveRunnerState({ ...(await loadRunnerState()), stopRequested: true, status: "stopping", updatedAt: Date.now() });
+      return { ok: true };
+    case "QUEUE_SKIP_CURRENT":
+      await saveRunnerState({ ...(await loadRunnerState()), skipRequested: true, updatedAt: Date.now() });
+      void resumeSavedQueueIfNeeded();
       return { ok: true };
     case "QUEUE_RESET":
       await disarmRunnerWatchdog();
@@ -148,6 +164,22 @@ async function runQueue(): Promise<void> {
         await saveRunnerState({ ...state, status: "paused", activeItemId: undefined, updatedAt: Date.now() });
         return;
       }
+      if (state.skipRequested) {
+        const activeId = state.activeItemId;
+        if (activeId) {
+          await patchQueueItem(activeId, (current) =>
+            updateItemStatus(current, "cancelled", { error: "Skipped by user" })
+          );
+        }
+        await saveRunnerState({
+          ...state,
+          skipRequested: false,
+          activeItemId: undefined,
+          updatedAt: Date.now()
+        });
+        await setCurrentItem(null);
+        continue;
+      }
 
       const queue = await loadQueue();
       const failedItem = queue.find((candidate) => candidate.status === "failed");
@@ -195,7 +227,8 @@ async function runQueue(): Promise<void> {
 
 async function processItem(item: QueueItem): Promise<ProcessResult> {
   const settings = await loadSettings();
-  await saveRunnerState(runningState(item.id));
+  const state = await loadRunnerState();
+  await saveRunnerState(runningState(item.id, state.skipRequested));
 
   const maxWaitMs = settings.maxWaitMinutesPerPrompt * 60 * 1000;
 
@@ -359,7 +392,12 @@ async function finishVerifiedDownload(
   settings: SceneFlowSettings,
   verifiedDownload: Extract<DownloadVerificationResult, { ok: true }>
 ): Promise<ProcessResult> {
-  const cooldownMs = settings.cooldownSeconds * 1000;
+  const minSec = settings.cooldownMinSeconds;
+  const maxSec = settings.cooldownMaxSeconds;
+  const cooldownSeconds = Math.floor(Math.random() * (maxSec - minSec + 1)) + minSec;
+  const cooldownMs = cooldownSeconds * 1000;
+  console.log(`[Scene Flow] Cooldown chosen: ${cooldownSeconds}s (Range: ${minSec}s - ${maxSec}s)`);
+
   await patchQueueItem(item.id, (current) =>
     updateItemStatus(current, "cooldown", {
       downloadId: verifiedDownload.downloadId,
@@ -718,7 +756,7 @@ async function clickActiveFlowTabAt(point: { x: number; y: number }): Promise<Co
       if (refreshResult && refreshResult.ok && refreshResult.clickPoint) {
         finalPoint = refreshResult.clickPoint;
       }
-    } catch (e) {
+    } catch {
       // Ignored if content script is unavailable
     }
 
@@ -781,7 +819,7 @@ async function hoverActiveFlowTabAt(point: { x: number; y: number }): Promise<Co
       if (refreshResult && refreshResult.ok && refreshResult.clickPoint) {
         finalPoint = refreshResult.clickPoint;
       }
-    } catch (e) {
+    } catch {
       // Ignored if content script is unavailable
     }
 
@@ -887,12 +925,13 @@ async function openControlWindow(): Promise<void> {
   });
 }
 
-function runningState(activeItemId: string): RunnerState {
+function runningState(activeItemId: string, skipRequested = false): RunnerState {
   return {
     status: "running",
     activeItemId,
     pauseRequested: false,
     stopRequested: false,
+    skipRequested,
     updatedAt: Date.now()
   };
 }
@@ -902,7 +941,10 @@ function sleep(ms: number): Promise<void> {
 }
 
 function retryDelayMs(settings: SceneFlowSettings): number {
-  return Math.max(3000, settings.cooldownSeconds * 1000);
+  const minSec = settings.cooldownMinSeconds;
+  const maxSec = settings.cooldownMaxSeconds;
+  const cooldownSeconds = Math.floor(Math.random() * (maxSec - minSec + 1)) + minSec;
+  return Math.max(3000, cooldownSeconds * 1000);
 }
 
 function downloadWaitMs(settings: SceneFlowSettings): number {

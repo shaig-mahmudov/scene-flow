@@ -32,6 +32,7 @@ export type ExtensionMessage =
   | { type: "QUEUE_PAUSE" }
   | { type: "QUEUE_RESUME" }
   | { type: "QUEUE_STOP" }
+  | { type: "QUEUE_SKIP_CURRENT" }
   | { type: "QUEUE_RESET" }
   | { type: "QUEUE_RETRY_FAILED" }
   | { type: "OPEN_CONTROL_WINDOW" }
