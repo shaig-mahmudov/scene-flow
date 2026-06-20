@@ -230,15 +230,20 @@ async function processItem(item: QueueItem): Promise<ProcessResult> {
     await handleFailure(item.id, submitResult.error, settings);
     return "defer";
   }
-  if (!submitResult.clickPoint) {
-    await handleFailure(item.id, "Could not locate the active Flow send button.", settings);
-    return "defer";
-  }
 
-  const clickResult = await clickActiveFlowTabAt(submitResult.clickPoint);
-  if (!clickResult.ok) {
-    await handleFailure(item.id, clickResult.error, settings);
-    return "defer";
+  if (submitResult.domClickSucceeded) {
+    console.log(`[Scene Flow] DOM click succeeded for item ${item.id}. Bypassing debugger click.`);
+  } else {
+    if (!submitResult.clickPoint) {
+      await handleFailure(item.id, "Could not locate the active Flow send button.", settings);
+      return "defer";
+    }
+    console.log(`[Scene Flow] DOM click did not submit or verify. Dispatching debugger click at coordinates (${submitResult.clickPoint.x}, ${submitResult.clickPoint.y}).`);
+    const clickResult = await clickActiveFlowTabAt(submitResult.clickPoint);
+    if (!clickResult.ok) {
+      await handleFailure(item.id, clickResult.error, settings);
+      return "defer";
+    }
   }
 
   await patchQueueItem(item.id, (current) =>
@@ -704,16 +709,29 @@ async function clickActiveFlowTabAt(point: { x: number; y: number }): Promise<Co
   const target: chrome.debugger.Debuggee = { tabId: tab.id };
   try {
     await chrome.debugger.attach(target, "1.3");
+    
+    // Wait for the "started debugging" infobar to cause a layout shift
+    await sleep(350);
+    let finalPoint = point;
+    try {
+      const refreshResult = await chrome.tabs.sendMessage(tab.id, { type: "REFRESH_COORDINATES" });
+      if (refreshResult && refreshResult.ok && refreshResult.clickPoint) {
+        finalPoint = refreshResult.clickPoint;
+      }
+    } catch (e) {
+      // Ignored if content script is unavailable
+    }
+
     await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
       type: "mouseMoved",
-      x: point.x,
-      y: point.y
+      x: finalPoint.x,
+      y: finalPoint.y
     });
     await sleep(50);
     await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
       type: "mousePressed",
-      x: point.x,
-      y: point.y,
+      x: finalPoint.x,
+      y: finalPoint.y,
       button: "left",
       buttons: 1,
       clickCount: 1
@@ -721,8 +739,8 @@ async function clickActiveFlowTabAt(point: { x: number; y: number }): Promise<Co
     await sleep(50);
     await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
       type: "mouseReleased",
-      x: point.x,
-      y: point.y,
+      x: finalPoint.x,
+      y: finalPoint.y,
       button: "left",
       buttons: 0,
       clickCount: 1
@@ -754,10 +772,23 @@ async function hoverActiveFlowTabAt(point: { x: number; y: number }): Promise<Co
   const target: chrome.debugger.Debuggee = { tabId: tab.id };
   try {
     await chrome.debugger.attach(target, "1.3");
+
+    // Wait for the "started debugging" infobar to cause a layout shift
+    await sleep(350);
+    let finalPoint = point;
+    try {
+      const refreshResult = await chrome.tabs.sendMessage(tab.id, { type: "REFRESH_COORDINATES" });
+      if (refreshResult && refreshResult.ok && refreshResult.clickPoint) {
+        finalPoint = refreshResult.clickPoint;
+      }
+    } catch (e) {
+      // Ignored if content script is unavailable
+    }
+
     await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
       type: "mouseMoved",
-      x: point.x,
-      y: point.y
+      x: finalPoint.x,
+      y: finalPoint.y
     });
     return { ok: true, itemId: "" };
   } catch (error) {

@@ -16,6 +16,8 @@ let activeSubmission:
   | { itemId: string; initialResultCount: number; initialMediaCount: number; initialMediaSource?: string; submittedAt: number }
   | undefined;
 
+let lastTargetedElement: HTMLElement | null = null;
+
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
   if (message.type === "SUBMIT_PROMPT") {
     submitPrompt(message)
@@ -25,18 +27,24 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
   }
 
   if (message.type === "CHECK_RESULT_READY") {
-    sendResponse(checkResultReady(message));
-    return false;
+    checkResultReady(message)
+      .then(sendResponse)
+      .catch((error: unknown) => sendResponse(toFailure(error, message.item.id)));
+    return true;
   }
 
   if (message.type === "GET_DOWNLOAD_BUTTON") {
-    sendResponse(getDownloadButton(message));
-    return false;
+    getDownloadButton(message)
+      .then(sendResponse)
+      .catch((error: unknown) => sendResponse(toFailure(error, message.item.id)));
+    return true;
   }
 
   if (message.type === "GET_DOWNLOAD_SIZE_OPTION") {
-    sendResponse(getDownloadSizeOption(message));
-    return false;
+    getDownloadSizeOption(message)
+      .then(sendResponse)
+      .catch((error: unknown) => sendResponse(toFailure(error, message.item.id)));
+    return true;
   }
 
   if (message.type === "GET_NEWEST_MEDIA_SOURCE") {
@@ -48,6 +56,13 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
     triggerDownload(message)
       .then(sendResponse)
       .catch((error: unknown) => sendResponse(toFailure(error, message.item.id)));
+    return true;
+  }
+
+  if (message.type === "REFRESH_COORDINATES") {
+    refreshCoordinates()
+      .then(sendResponse)
+      .catch((error: unknown) => sendResponse(toFailure(error)));
     return true;
   }
 
@@ -65,17 +80,49 @@ async function submitPrompt(message: Extract<ExtensionMessage, { type: "SUBMIT_P
   const initialMediaCount = findGeneratedMediaElements().length;
   const initialMediaSource = findNewestGeneratedMediaSource();
   const button = await waitForGenerateButton(input);
+  
   const submittedAt = Date.now();
   activeSubmission = { itemId: message.item.id, initialResultCount, initialMediaCount, initialMediaSource, submittedAt };
+  lastTargetedElement = button;
+
+  let clickPoint: { x: number; y: number } | undefined;
+  try {
+    clickPoint = await getElementCenterAsync(button);
+    showVisualIndicator(clickPoint.x, clickPoint.y);
+  } catch (error) {
+    console.warn("Could not calculate click point coordinates:", error);
+  }
+
+  // Attempt DOM click (hybrid click mechanism)
+  let domClickSucceeded = false;
+  try {
+    console.log("Attempting direct DOM click on button...");
+    clickLikeUser(button);
+    
+    // Wait 250ms to see if page state reacted/submitted
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    
+    const isDisabledOrGone = !button.isConnected || button.getAttribute("aria-disabled") === "true" || button.hasAttribute("disabled");
+    const currentInputVal = (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) ? input.value : input.textContent;
+    if (isDisabledOrGone || !currentInputVal || currentInputVal.trim() === "") {
+      console.log("Direct DOM click succeeded (button disabled/gone or input cleared). Bypassing hardware click.");
+      domClickSucceeded = true;
+    } else {
+      console.log("Input still has content. Direct DOM click might not have submitted the form.");
+    }
+  } catch (e) {
+    console.error("Direct DOM click error:", e);
+  }
 
   return {
     ok: true,
     itemId: message.item.id,
-    clickPoint: getElementCenter(button),
+    clickPoint,
     submittedAt,
     initialResultCount,
     initialMediaCount,
-    initialMediaSource
+    initialMediaSource,
+    domClickSucceeded
   };
 }
 
@@ -95,9 +142,9 @@ async function waitForGenerateButton(input: HTMLElement): Promise<HTMLElement> {
   throw new Error("Could not find an enabled composer send button after setting the prompt.");
 }
 
-function checkResultReady(
+async function checkResultReady(
   message: Extract<ExtensionMessage, { type: "CHECK_RESULT_READY" }>
-): ContentAutomationResult {
+): Promise<ContentAutomationResult> {
   const initialResultCount =
     message.item.initialResultCount ??
     (activeSubmission?.itemId === message.item.id ? activeSubmission.initialResultCount : 0);
@@ -111,13 +158,14 @@ function checkResultReady(
     message.item.submittedAt ??
     (activeSubmission?.itemId === message.item.id ? activeSubmission.submittedAt : Date.now());
   const readiness = getResultReadiness({ initialResultCount, initialMediaCount, initialMediaSource, submittedAt });
+  lastTargetedElement = readiness.downloadButton ?? readiness.revealTarget ?? null;
   return {
     ok: true,
     itemId: message.item.id,
     ready: readiness.ready,
     hasDownloadButton: readiness.hasDownloadButton,
-    downloadClickPoint: readiness.downloadButton ? getElementCenter(readiness.downloadButton) : undefined,
-    revealPoint: readiness.revealTarget ? getElementCenter(readiness.revealTarget) : undefined,
+    downloadClickPoint: readiness.downloadButton ? await getElementCenterAsync(readiness.downloadButton) : undefined,
+    revealPoint: readiness.revealTarget ? await getElementCenterAsync(readiness.revealTarget) : undefined,
     submittedAt,
     initialResultCount,
     initialMediaCount,
@@ -125,30 +173,32 @@ function checkResultReady(
   };
 }
 
-function getDownloadButton(
+async function getDownloadButton(
   message: Extract<ExtensionMessage, { type: "GET_DOWNLOAD_BUTTON" }>
-): ContentAutomationResult {
+): Promise<ContentAutomationResult> {
   const button = findDownloadButtonNearNewestMedia();
   const menuButton = button ? null : findOverflowMenuButtonNearNewestMedia();
+  lastTargetedElement = button ?? menuButton ?? null;
   return {
     ok: true,
     itemId: message.item.id,
     ready: Boolean(button),
     hasDownloadButton: Boolean(button),
-    downloadClickPoint: button ? getElementCenter(button) : undefined,
-    menuClickPoint: menuButton ? getElementCenter(menuButton) : undefined
+    downloadClickPoint: button ? await getElementCenterAsync(button) : undefined,
+    menuClickPoint: menuButton ? await getElementCenterAsync(menuButton) : undefined
   };
 }
 
-function getDownloadSizeOption(
+async function getDownloadSizeOption(
   message: Extract<ExtensionMessage, { type: "GET_DOWNLOAD_SIZE_OPTION" }>
-): ContentAutomationResult {
+): Promise<ContentAutomationResult> {
   const option = findOriginalSizeDownloadOption();
+  lastTargetedElement = option;
   return {
     ok: true,
     itemId: message.item.id,
     ready: Boolean(option),
-    sizeClickPoint: option ? getElementCenter(option) : undefined
+    sizeClickPoint: option ? await getElementCenterAsync(option) : undefined
   };
 }
 
@@ -223,8 +273,9 @@ function clickLikeUser(button: HTMLElement): void {
   button.click();
 }
 
-function getElementCenter(element: HTMLElement): { x: number; y: number } {
+async function getElementCenterAsync(element: HTMLElement): Promise<{ x: number; y: number }> {
   element.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+  
   const rect = element.getBoundingClientRect();
   
   if (rect.width === 0 || rect.height === 0) {
@@ -243,4 +294,35 @@ function toFailure(error: unknown, itemId?: string): ContentAutomationResult {
     itemId,
     error: error instanceof Error ? error.message : "Unknown content script error."
   };
+}
+
+function showVisualIndicator(x: number, y: number): void {
+  const existing = document.getElementById("scene-flow-debug-indicator");
+  if (existing) {
+    existing.remove();
+  }
+  const dot = document.createElement("div");
+  dot.id = "scene-flow-debug-indicator";
+  dot.style.position = "fixed";
+  dot.style.left = `${x - 6}px`;
+  dot.style.top = `${y - 6}px`;
+  dot.style.width = "12px";
+  dot.style.height = "12px";
+  dot.style.borderRadius = "50%";
+  dot.style.backgroundColor = "#ff003c";
+  dot.style.border = "2px solid #ffffff";
+  dot.style.boxShadow = "0 0 8px rgba(255, 0, 60, 0.8)";
+  dot.style.zIndex = "2147483647";
+  dot.style.pointerEvents = "none";
+  document.body.appendChild(dot);
+  console.log(`[Scene Flow Debug] Injected visual indicator dot at viewport coordinate: (${x}, ${y})`);
+}
+
+async function refreshCoordinates(): Promise<ContentAutomationResult> {
+  if (!lastTargetedElement || !lastTargetedElement.isConnected) {
+    return { ok: false, error: "Target element is no longer in the DOM. Layout shift may have caused it to unmount." };
+  }
+  const clickPoint = await getElementCenterAsync(lastTargetedElement);
+  showVisualIndicator(clickPoint.x, clickPoint.y);
+  return { ok: true, itemId: "", clickPoint };
 }

@@ -42,8 +42,6 @@ export function findGenerateButton(promptInput?: HTMLElement): HTMLElement | nul
 
   const buttons = visibleElements(document.querySelectorAll<HTMLElement>('button, [role="button"]'));
   const scored = buttons.map((button) => {
-    if (isDisabled(button)) return { button, score: -100 };
-
     const label = button.getAttribute("aria-label") ?? "";
     const title = button.getAttribute("title") ?? "";
     const text = button.textContent?.trim() ?? "";
@@ -67,6 +65,15 @@ export function findGenerateButton(promptInput?: HTMLElement): HTMLElement | nul
 
     return { button, score };
   });
+
+  console.log(
+    "Scene Flow candidate global buttons:",
+    scored.filter((s) => s.score > 0).map((s) => ({
+      html: s.button.outerHTML,
+      score: s.score,
+      rect: { x: s.button.getBoundingClientRect().left, y: s.button.getBoundingClientRect().top, width: s.button.getBoundingClientRect().width, height: s.button.getBoundingClientRect().height }
+    }))
+  );
 
   const best = scored
     .filter((item) => item.score > 0)
@@ -275,8 +282,6 @@ function findNearbyPromptButton(promptInput?: HTMLElement): HTMLElement | null {
 
     const buttons = visibleElements(parent.querySelectorAll<HTMLElement>('button, [role="button"]'))
       .filter((button) => {
-        if (isDisabled(button)) return false;
-
         const label = button.getAttribute("aria-label") ?? "";
         const title = button.getAttribute("title") ?? "";
         const text = button.textContent?.trim() ?? "";
@@ -290,9 +295,11 @@ function findNearbyPromptButton(promptInput?: HTMLElement): HTMLElement | null {
         const rect = button.getBoundingClientRect();
         const isBelowOrRight = rect.bottom > inputRect.top - 10;
         const closeHorizontally = rect.left > inputRect.left - 50;
-        const compactAction = rect.width <= 150 && rect.height <= 96;
+        
+        // Relax size check to allow full-width buttons
+        const isNotMassive = rect.width <= 400 && rect.height <= 120;
 
-        return isBelowOrRight && closeHorizontally && compactAction;
+        return isBelowOrRight && closeHorizontally && isNotMassive;
       });
 
     if (buttons.length > 0) {
@@ -317,6 +324,15 @@ function findNearbyPromptButton(promptInput?: HTMLElement): HTMLElement | null {
         return { button, score };
       });
 
+      console.log(
+        "Scene Flow candidate nearby buttons:",
+        scored.map((s) => ({
+          html: s.button.outerHTML,
+          score: s.score,
+          rect: { x: s.button.getBoundingClientRect().left, y: s.button.getBoundingClientRect().top, width: s.button.getBoundingClientRect().width, height: s.button.getBoundingClientRect().height }
+        }))
+      );
+
       return scored.sort((a, b) => b.score - a.score)[0]?.button ?? null;
     }
 
@@ -333,11 +349,22 @@ function setNativeInputValue(input: HTMLInputElement | HTMLTextAreaElement, valu
 }
 
 function dispatchTextEvents(input: HTMLElement, prompt: string): void {
+  input.dispatchEvent(new Event("focus", { bubbles: true }));
+  input.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
   input.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: prompt }));
+  input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Process", code: "Process", keyCode: 229 }));
+  
   input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: prompt }));
-  input.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: " ", code: "Space" }));
+  
+  input.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: " ", code: "Space", keyCode: 32 }));
   input.dispatchEvent(new Event("change", { bubbles: true }));
-  input.blur();
+  
+  // Dispatch generic typing keys to ensure framework listeners trigger
+  input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "a", code: "KeyA", keyCode: 65 }));
+  input.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "a", code: "KeyA", keyCode: 65 }));
+
+  input.dispatchEvent(new Event("blur", { bubbles: true }));
 }
 
 function dispatchPasteEvents(input: HTMLElement, prompt: string): void {

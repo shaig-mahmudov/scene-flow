@@ -17,6 +17,7 @@ export type ContentAutomationResult =
       sizeClickPoint?: ViewportClickPoint;
       mediaUrl?: string;
       downloadId?: number;
+      domClickSucceeded?: boolean;
     }
   | { ok: false; itemId?: string; error: string };
 
@@ -45,7 +46,8 @@ export type ExtensionMessage =
   | { type: "RESULT_READY"; itemId: string }
   | { type: "DOWNLOAD_TRIGGERED"; itemId: string }
   | { type: "ITEM_DONE"; itemId: string }
-  | { type: "ITEM_FAILED"; itemId: string; error: string };
+  | { type: "ITEM_FAILED"; itemId: string; error: string }
+  | { type: "REFRESH_COORDINATES" };
 
 export function isExtensionMessage(value: unknown): value is ExtensionMessage {
   return typeof value === "object" && value !== null && "type" in value;
