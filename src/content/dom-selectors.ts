@@ -37,7 +37,42 @@ export function findPromptInput(): HTMLElement | null {
 }
 
 export function findGenerateButton(promptInput?: HTMLElement): HTMLElement | null {
-  return findNearbyPromptButton(promptInput);
+  const nearby = findNearbyPromptButton(promptInput);
+  if (nearby) return nearby;
+
+  const buttons = visibleElements(document.querySelectorAll<HTMLElement>('button, [role="button"]'));
+  const scored = buttons.map((button) => {
+    if (isDisabled(button)) return { button, score: -100 };
+
+    const label = button.getAttribute("aria-label") ?? "";
+    const title = button.getAttribute("title") ?? "";
+    const text = button.textContent?.trim() ?? "";
+    const testId = button.getAttribute("data-testid") ?? "";
+    const combined = `${label} ${title} ${text} ${testId}`.toLowerCase();
+
+    if (/add|upload|media|attach|agent|settings|filter|tune|menu|back|project|home|collapse|trash|voice|mic/i.test(combined)) {
+      return { button, score: -100 };
+    }
+
+    let score = 0;
+    if (combined.includes("generate")) score += 30;
+    else if (combined.includes("send")) score += 20;
+    else if (combined.includes("submit")) score += 20;
+    else if (combined.includes("run")) score += 15;
+
+    const rect = button.getBoundingClientRect();
+    if (rect.bottom > window.innerHeight * 0.5) {
+      score += 5;
+    }
+
+    return { button, score };
+  });
+
+  const best = scored
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)[0];
+
+  return best?.button ?? null;
 }
 
 export function findResultCards(): HTMLElement[] {
@@ -228,23 +263,61 @@ function isInComposerArea(element: HTMLElement): boolean {
 function findNearbyPromptButton(promptInput?: HTMLElement): HTMLElement | null {
   if (!promptInput) return null;
 
+  const inputRect = promptInput.getBoundingClientRect();
+
   let parent = promptInput.parentElement;
   for (let depth = 0; parent && depth < 8; depth += 1) {
     const parentRect = parent.getBoundingClientRect();
-    const inputRect = promptInput.getBoundingClientRect();
-    const inputCenterY = inputRect.top + inputRect.height / 2;
-    const looksLikeComposer =
-      parentRect.width >= inputRect.width &&
-      parentRect.width <= Math.max(inputRect.width + 900, 320) &&
-      Math.abs(parentRect.bottom - inputRect.bottom) < 160 &&
-      parentRect.bottom > window.innerHeight * 0.45;
+    if (parentRect.width < inputRect.width) {
+      parent = parent.parentElement;
+      continue;
+    }
 
-    if (looksLikeComposer) {
-      const buttons = visibleElements(parent.querySelectorAll<HTMLElement>('button, [role="button"]'))
-        .filter((button) => isPossibleSubmitButton(button, inputRect, inputCenterY))
-        .sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right);
+    const buttons = visibleElements(parent.querySelectorAll<HTMLElement>('button, [role="button"]'))
+      .filter((button) => {
+        if (isDisabled(button)) return false;
 
-      if (buttons.length > 0) return buttons[0] ?? null;
+        const label = button.getAttribute("aria-label") ?? "";
+        const title = button.getAttribute("title") ?? "";
+        const text = button.textContent?.trim() ?? "";
+        const combined = `${label} ${title} ${text}`.toLowerCase();
+
+        if (/add|upload|media|attach|agent|settings|filter|tune|menu|back|project|home|collapse|trash|voice|mic/i.test(combined)) {
+          return false;
+        }
+        if (text === "+" || text.toLowerCase() === "agent") return false;
+
+        const rect = button.getBoundingClientRect();
+        const isBelowOrRight = rect.bottom > inputRect.top - 10;
+        const closeHorizontally = rect.left > inputRect.left - 50;
+        const compactAction = rect.width <= 150 && rect.height <= 96;
+
+        return isBelowOrRight && closeHorizontally && compactAction;
+      });
+
+    if (buttons.length > 0) {
+      const scored = buttons.map((button) => {
+        const label = button.getAttribute("aria-label") ?? "";
+        const title = button.getAttribute("title") ?? "";
+        const text = button.textContent?.trim() ?? "";
+        const combined = `${label} ${title} ${text}`.toLowerCase();
+
+        let score = 0;
+        if (/generate/i.test(combined)) score += 50;
+        else if (/send/i.test(combined)) score += 40;
+        else if (/submit/i.test(combined)) score += 40;
+        else if (/run/i.test(combined)) score += 30;
+
+        const rect = button.getBoundingClientRect();
+        const distFromRight = parentRect.right - rect.right;
+        const distFromBottom = parentRect.bottom - rect.bottom;
+        const proximityBoost = Math.max(0, 10 - (distFromRight + distFromBottom) / 100);
+        score += proximityBoost;
+
+        return { button, score };
+      });
+
+      return scored.sort((a, b) => b.score - a.score)[0]?.button ?? null;
     }
 
     parent = parent.parentElement;
@@ -280,26 +353,7 @@ function dispatchPasteEvents(input: HTMLElement, prompt: string): void {
   );
 }
 
-function isPossibleSubmitButton(button: HTMLElement, inputRect: DOMRect, inputCenterY: number): boolean {
-  const label = button.getAttribute("aria-label") ?? "";
-  const title = button.getAttribute("title") ?? "";
-  const text = button.textContent?.trim() ?? "";
-  const combined = `${label} ${title} ${text}`;
-  const rect = button.getBoundingClientRect();
-  const centerY = rect.top + rect.height / 2;
-
-  if (isDisabled(button)) return false;
-  if (/add|upload|media|attach|agent|settings|filter|tune|menu|back|project|home|collapse|trash|voice|mic/i.test(combined)) {
-    return false;
-  }
-  if (text === "+" || text.toLowerCase() === "agent") return false;
-
-  const verticallyAligned = Math.abs(centerY - inputCenterY) < Math.max(inputRect.height, 80);
-  const toRightOfPrompt = rect.left > inputRect.left + Math.min(160, inputRect.width * 0.35);
-  const compactAction = rect.width <= 96 && rect.height <= 96;
-
-  return verticallyAligned && toRightOfPrompt && compactAction;
-}
+// isPossibleSubmitButton has been integrated into findNearbyPromptButton and removed.
 
 function isDisabled(element: HTMLElement): boolean {
   return (
