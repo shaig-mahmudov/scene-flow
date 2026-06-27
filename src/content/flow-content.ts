@@ -9,7 +9,7 @@ import {
   findResultCards,
   setPromptText
 } from "./dom-selectors";
-import { getResultReadiness, waitForReadyResult } from "./result-watcher";
+import { getResultReadiness } from "./result-watcher";
 import type { ContentAutomationResult, ExtensionMessage } from "../core/messaging/messages";
 
 let activeSubmission:
@@ -74,7 +74,7 @@ async function submitPrompt(message: Extract<ExtensionMessage, { type: "SUBMIT_P
   const input = findPromptInput();
   if (!input) return { ok: false, itemId: message.item.id, error: "Could not find the Google Flow prompt input." };
 
-  setPromptText(input, message.item.prompt);
+  await setPromptText(input, message.item.prompt);
   closeOpenOverlay(); // Clear any popups or tooltips that appeared after typing
   const initialResultCount = findResultCards().length;
   const initialMediaCount = findGeneratedMediaElements().length;
@@ -229,22 +229,27 @@ async function triggerDownload(
     message.item.submittedAt ??
     (activeSubmission?.itemId === message.item.id ? activeSubmission.submittedAt : Date.now());
   const readiness = getResultReadiness({ initialResultCount, initialMediaCount, initialMediaSource, submittedAt });
-  if (!readiness.hasDownloadButton) {
-    const button = findDownloadButtonNearNewestMedia();
-    if (!button) return { ok: false, itemId: message.item.id, error: "Could not find a Flow download button." };
-    clickLikeUser(button);
-    return { ok: true, itemId: message.item.id };
+  
+  const button = readiness.downloadButton ?? findDownloadButtonNearNewestMedia();
+  if (!button) {
+    return { ok: false, itemId: message.item.id, error: "Could not find a Flow download button." };
   }
 
-  const button =
-    readiness.downloadButton ??
-    (await waitForReadyResult({
-      initialResultCount,
-      initialMediaCount,
-      submittedAt,
-      timeoutMs: Math.min(message.maxWaitMs, 5000)
-    }));
   clickLikeUser(button);
+  
+  // Wait up to 1.5 seconds for size option dropdown to appear (some Flow configs show original size dropdown)
+  let option: HTMLElement | null = null;
+  for (let i = 0; i < 6; i++) {
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    option = findOriginalSizeDownloadOption();
+    if (option) break;
+  }
+  
+  if (option) {
+    console.log("[Scene Flow] Original size option found. Clicking it...");
+    clickLikeUser(option);
+  }
+
   return { ok: true, itemId: message.item.id };
 }
 
@@ -253,24 +258,98 @@ function closeOpenOverlay(): void {
   document.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Escape", code: "Escape" }));
 }
 
-
 function clickLikeUser(button: HTMLElement): void {
-  button.scrollIntoView({ block: "center", inline: "center" });
+  button.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
   button.focus();
 
+  const rect = button.getBoundingClientRect();
+  const paddingX = rect.width * 0.25;
+  const paddingY = rect.height * 0.25;
+  const randomX = rect.left + paddingX + Math.random() * (rect.width - 2 * paddingX);
+  const randomY = rect.top + paddingY + Math.random() * (rect.height - 2 * paddingY);
+
   for (const type of ["pointerover", "pointerenter", "pointermove", "pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
-    button.dispatchEvent(
-      new MouseEvent(type, {
-        bubbles: true,
-        cancelable: true,
-        view: window,
-        button: 0,
-        buttons: type.endsWith("down") ? 1 : 0
-      })
-    );
+    const isDown = type.endsWith("down");
+    const eventInit = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      button: 0,
+      buttons: isDown ? 1 : 0,
+      clientX: randomX,
+      clientY: randomY,
+      screenX: randomX + window.screenX,
+      screenY: randomY + window.screenY
+    };
+
+    let event;
+    if (type.startsWith("pointer")) {
+      event = new PointerEvent(type, { ...eventInit, isPrimary: true, pointerType: "mouse" });
+    } else {
+      event = new MouseEvent(type, eventInit);
+    }
+    button.dispatchEvent(event);
   }
 
-  button.click();
+  tryReactFiberClick(button);
+}
+
+function tryReactFiberClick(el: HTMLElement): void {
+  const tempId = `click_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  el.setAttribute("data-flow-temp-click", tempId);
+
+  const script = document.createElement("script");
+  script.textContent = `
+    (function() {
+      const el = document.querySelector('[data-flow-temp-click="${tempId}"]');
+      if (!el) return;
+      el.removeAttribute("data-flow-temp-click");
+      
+      function makeFakeEvent(type, target) {
+        return {
+          type: type,
+          isTrusted: true,
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          timeStamp: Date.now(),
+          target: target,
+          currentTarget: target,
+          preventDefault: () => {},
+          stopPropagation: () => {},
+          nativeEvent: { type, isTrusted: true, target, currentTarget: target }
+        };
+      }
+
+      const walkers = [el].concat(Array.from(el.querySelectorAll('*')));
+      let parent = el.parentElement;
+      for (let d = 0; d < 12 && parent && parent !== document.body; d++) {
+        walkers.push(parent);
+        parent = parent.parentElement;
+      }
+
+      for (let i = 0; i < walkers.length; i++) {
+        const node = walkers[i];
+        const pk = Object.keys(node).find(k => k.startsWith('__reactProps$') || k.startsWith('__reactEventHandlers$'));
+        if (!pk) continue;
+        const props = node[pk];
+        const handlers = ['onClick', 'onPointerDown', 'onMouseDown'];
+        for (let h = 0; h < handlers.length; h++) {
+          if (typeof props[handlers[h]] === 'function') {
+            try {
+              const evtType = handlers[h] === 'onClick' ? 'click' : handlers[h] === 'onPointerDown' ? 'pointerdown' : 'mousedown';
+              props[handlers[h]](makeFakeEvent(evtType, node));
+              return;
+            } catch (e) {}
+          }
+        }
+      }
+      
+      try { el.click(); } catch(e) {}
+    })();
+  `;
+  document.head.appendChild(script);
+  script.remove();
 }
 
 async function getElementCenterAsync(element: HTMLElement): Promise<{ x: number; y: number }> {
@@ -282,9 +361,12 @@ async function getElementCenterAsync(element: HTMLElement): Promise<{ x: number;
     throw new Error("Chrome window appears to be minimized or fully hidden by the OS. Cannot capture coordinates.");
   }
 
+  const paddingX = rect.width * 0.25;
+  const paddingY = rect.height * 0.25;
+
   return {
-    x: Math.round(rect.left + rect.width / 2),
-    y: Math.round(rect.top + rect.height / 2)
+    x: Math.round(rect.left + paddingX + Math.random() * (rect.width - 2 * paddingX)),
+    y: Math.round(rect.top + paddingY + Math.random() * (rect.height - 2 * paddingY))
   };
 }
 

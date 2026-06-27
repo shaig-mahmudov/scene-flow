@@ -264,21 +264,6 @@ async function processItem(item: QueueItem): Promise<ProcessResult> {
     return "defer";
   }
 
-  if (submitResult.domClickSucceeded) {
-    console.log(`[Scene Flow] DOM click succeeded for item ${item.id}. Bypassing debugger click.`);
-  } else {
-    if (!submitResult.clickPoint) {
-      await handleFailure(item.id, "Could not locate the active Flow send button.", settings);
-      return "defer";
-    }
-    console.log(`[Scene Flow] DOM click did not submit or verify. Dispatching debugger click at coordinates (${submitResult.clickPoint.x}, ${submitResult.clickPoint.y}).`);
-    const clickResult = await clickActiveFlowTabAt(submitResult.clickPoint);
-    if (!clickResult.ok) {
-      await handleFailure(item.id, clickResult.error, settings);
-      return "defer";
-    }
-  }
-
   await patchQueueItem(item.id, (current) =>
     updateItemStatus(current, "waiting_result", {
       submittedAt: submitResult.submittedAt,
@@ -363,7 +348,7 @@ async function downloadReadyResult(
   const currentItem = (await loadQueue()).find((candidate) => candidate.id === item.id) ?? item;
   await setCurrentItem(currentItem);
 
-  const downloadResult = await triggerFlowDownload(item, result);
+  const downloadResult = await triggerFlowDownload(item, maxWaitMs, result);
   if (!downloadResult.ok) {
     await setCurrentItem(null);
     if (isTemporaryFlowCommunicationError(downloadResult.error)) {
@@ -432,55 +417,15 @@ async function recoverCooldownItem(item: QueueItem): Promise<ProcessResult> {
 
 async function triggerFlowDownload(
   item: QueueItem,
-  readyResult: Extract<ContentAutomationResult, { ok: true }>
+  maxWaitMs: number,
+  _readyResult: Extract<ContentAutomationResult, { ok: true }>
 ): Promise<ContentAutomationResult> {
-  if (readyResult.downloadClickPoint) {
-    const downloadClickResult = await clickActiveFlowTabAt(readyResult.downloadClickPoint);
-    if (!downloadClickResult.ok) return downloadClickResult;
-    return selectOriginalDownloadSize(item);
+  const result = await sendToActiveFlowTab({ type: "TRIGGER_DOWNLOAD", item, maxWaitMs });
+  if (!result.ok) {
+    console.warn(`[Scene Flow] DOM click download failed: ${result.error}. Attempting direct download.`);
+    return downloadNewestMediaDirectly(item);
   }
-
-  if (readyResult.revealPoint) {
-    const hoverResult = await hoverActiveFlowTabAt(readyResult.revealPoint);
-    if (!hoverResult.ok) return hoverResult;
-    await sleep(700);
-  }
-
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const buttonResult = await sendToActiveFlowTab({ type: "GET_DOWNLOAD_BUTTON", item });
-    if (!buttonResult.ok) return buttonResult;
-    if (buttonResult.downloadClickPoint) {
-      const downloadClickResult = await clickActiveFlowTabAt(buttonResult.downloadClickPoint);
-      if (!downloadClickResult.ok) return downloadClickResult;
-      return selectOriginalDownloadSize(item);
-    }
-    if (buttonResult.menuClickPoint) {
-      const menuResult = await clickActiveFlowTabAt(buttonResult.menuClickPoint);
-      if (!menuResult.ok) return menuResult;
-      await sleep(700);
-    }
-    await sleep(700);
-  }
-
-  return downloadNewestMediaDirectly(item);
-}
-
-async function selectOriginalDownloadSize(item: QueueItem): Promise<ContentAutomationResult> {
-  await sleep(700);
-
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const sizeResult = await sendToActiveFlowTab({ type: "GET_DOWNLOAD_SIZE_OPTION", item });
-    if (!sizeResult.ok) return sizeResult;
-    if (sizeResult.sizeClickPoint) {
-      return clickActiveFlowTabAt(sizeResult.sizeClickPoint);
-    }
-    await sleep(500);
-  }
-
-  return {
-    ok: false,
-    error: "Download menu opened, but Scene Flow could not find the 1K/original size option."
-  };
+  return result;
 }
 
 async function downloadNewestMediaDirectly(item: QueueItem): Promise<ContentAutomationResult> {
@@ -738,113 +683,7 @@ async function sendToActiveFlowTab(message: ExtensionMessage): Promise<ContentAu
   }
 }
 
-async function clickActiveFlowTabAt(point: { x: number; y: number }): Promise<ContentAutomationResult> {
-  const tab = await getTargetFlowTab();
-  if (!tab?.id || !isRunnableFlowProjectUrl(tab.url)) {
-    return { ok: false, error: supportedFlowUrlMessage() };
-  }
 
-  const target: chrome.debugger.Debuggee = { tabId: tab.id };
-  try {
-    await chrome.debugger.attach(target, "1.3");
-    
-    // Wait for the "started debugging" infobar to cause a layout shift
-    await sleep(350);
-    let finalPoint = point;
-    try {
-      const refreshResult = await chrome.tabs.sendMessage(tab.id, { type: "REFRESH_COORDINATES" });
-      if (refreshResult && refreshResult.ok && refreshResult.clickPoint) {
-        finalPoint = refreshResult.clickPoint;
-      }
-    } catch {
-      // Ignored if content script is unavailable
-    }
-
-    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
-      type: "mouseMoved",
-      x: finalPoint.x,
-      y: finalPoint.y
-    });
-    await sleep(50);
-    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
-      type: "mousePressed",
-      x: finalPoint.x,
-      y: finalPoint.y,
-      button: "left",
-      buttons: 1,
-      clickCount: 1
-    });
-    await sleep(50);
-    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
-      type: "mouseReleased",
-      x: finalPoint.x,
-      y: finalPoint.y,
-      button: "left",
-      buttons: 0,
-      clickCount: 1
-    });
-    return { ok: true, itemId: "" };
-  } catch (error) {
-    return {
-      ok: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "Chrome could not dispatch a real click to the Flow send button."
-    };
-  } finally {
-    try {
-      await chrome.debugger.detach(target);
-    } catch {
-      // Detach can fail if attach did not complete; the click result above is the useful error.
-    }
-  }
-}
-
-async function hoverActiveFlowTabAt(point: { x: number; y: number }): Promise<ContentAutomationResult> {
-  const tab = await getTargetFlowTab();
-  if (!tab?.id || !isRunnableFlowProjectUrl(tab.url)) {
-    return { ok: false, error: supportedFlowUrlMessage() };
-  }
-
-  const target: chrome.debugger.Debuggee = { tabId: tab.id };
-  try {
-    await chrome.debugger.attach(target, "1.3");
-
-    // Wait for the "started debugging" infobar to cause a layout shift
-    await sleep(350);
-    let finalPoint = point;
-    try {
-      const refreshResult = await chrome.tabs.sendMessage(tab.id, { type: "REFRESH_COORDINATES" });
-      if (refreshResult && refreshResult.ok && refreshResult.clickPoint) {
-        finalPoint = refreshResult.clickPoint;
-      }
-    } catch {
-      // Ignored if content script is unavailable
-    }
-
-    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
-      type: "mouseMoved",
-      x: finalPoint.x,
-      y: finalPoint.y
-    });
-    return { ok: true, itemId: "" };
-  } catch (error) {
-    return {
-      ok: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "Chrome could not reveal Flow result actions."
-    };
-  } finally {
-    try {
-      await chrome.debugger.detach(target);
-    } catch {
-      // Detach can fail if attach did not complete; the hover result above is the useful error.
-    }
-  }
-}
 
 async function getActiveFlowTab(): Promise<chrome.tabs.Tab | undefined> {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -936,9 +775,7 @@ function runningState(activeItemId: string, skipRequested = false): RunnerState 
   };
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+
 
 function retryDelayMs(settings: SceneFlowSettings): number {
   const minSec = settings.cooldownMinSeconds;
