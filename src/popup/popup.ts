@@ -13,6 +13,7 @@ const cooldownMaxInput = getElement<HTMLInputElement>("cooldownMaxInput");
 const maxWaitInput = getElement<HTMLInputElement>("maxWaitInput");
 const retryInput = getElement<HTMLInputElement>("retryInput");
 const extensionInput = getElement<HTMLSelectElement>("extensionInput");
+const globalStyleInput = getElement<HTMLTextAreaElement>("globalStyleInput");
 const statusText = getElement<HTMLElement>("statusText");
 const parseMessage = getElement<HTMLElement>("parseMessage");
 const queueList = getElement<HTMLOListElement>("queueList");
@@ -29,7 +30,7 @@ getElement<HTMLButtonElement>("refreshButton").addEventListener("click", renderS
 getElement<HTMLButtonElement>("openWindowButton").addEventListener("click", openControlWindow);
 fileInput.addEventListener("change", handleFileUpload);
 
-for (const input of [outputFolderInput, subFolderInput, cooldownMinInput, cooldownMaxInput, maxWaitInput, retryInput, extensionInput]) {
+for (const input of [outputFolderInput, subFolderInput, cooldownMinInput, cooldownMaxInput, maxWaitInput, retryInput, extensionInput, globalStyleInput]) {
   input.addEventListener("change", persistSettingsFromForm);
 }
 
@@ -63,7 +64,7 @@ async function handleFileUpload(): Promise<void> {
   try {
     const settings = await persistSettingsFromForm();
     const markdown = await file.text();
-    const result = parseMarkdownPrompts(markdown);
+    const result = parseMarkdownPrompts(markdown, settings.globalStyle);
     const queue = createQueueItems(result.prompts, settings);
     await saveQueue(queue);
     showMessage(
@@ -85,7 +86,8 @@ async function persistSettingsFromForm(): Promise<SceneFlowSettings> {
     cooldownMaxSeconds: clampNumber(cooldownMaxInput.valueAsNumber, 1, 60, DEFAULT_SETTINGS.cooldownMaxSeconds),
     maxWaitMinutesPerPrompt: clampNumber(maxWaitInput.valueAsNumber, 1, 180, DEFAULT_SETTINGS.maxWaitMinutesPerPrompt),
     maxRetries: clampNumber(retryInput.valueAsNumber, 0, 10, DEFAULT_SETTINGS.maxRetries),
-    expectedExtension: extensionInput.value as ExpectedExtension
+    expectedExtension: extensionInput.value as ExpectedExtension,
+    globalStyle: globalStyleInput.value.trim()
   };
 
   writeSettings(settings);
@@ -176,6 +178,7 @@ function writeSettings(settings: SceneFlowSettings): void {
   maxWaitInput.value = String(settings.maxWaitMinutesPerPrompt);
   retryInput.value = String(settings.maxRetries);
   extensionInput.value = settings.expectedExtension;
+  globalStyleInput.value = settings.globalStyle || "";
 }
 
 function showMessage(message: string, isError = false): void {

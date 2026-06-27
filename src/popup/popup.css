@@ -174,9 +174,27 @@ h2 {
 }
 
 .settings-grid input:focus,
-.settings-grid select:focus {
+.settings-grid select:focus,
+.settings-grid textarea:focus {
   border-color: var(--blue);
   box-shadow: 0 0 0 2px rgba(79, 140, 255, 0.18);
+}
+
+.settings-grid label.full-width {
+  grid-column: span 2;
+}
+
+.settings-grid textarea {
+  width: 100%;
+  min-height: 48px;
+  max-height: 80px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: #080c13;
+  color: var(--text);
+  outline: none;
 }
 
 .controls {

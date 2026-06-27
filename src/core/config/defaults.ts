@@ -7,7 +7,8 @@ export const DEFAULT_SETTINGS: SceneFlowSettings = {
   cooldownMaxSeconds: 20,
   maxWaitMinutesPerPrompt: 15,
   maxRetries: 1,
-  expectedExtension: "png"
+  expectedExtension: "png",
+  globalStyle: ""
 };
 
 export const STORAGE_KEYS = {

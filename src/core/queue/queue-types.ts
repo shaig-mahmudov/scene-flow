@@ -21,6 +21,7 @@ export type SceneFlowSettings = {
   maxWaitMinutesPerPrompt: number;
   maxRetries: number;
   expectedExtension: ExpectedExtension;
+  globalStyle?: string;
 };
 
 export type QueueItem = {
