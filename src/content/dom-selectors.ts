@@ -224,17 +224,154 @@ export function findOriginalSizeDownloadOption(): HTMLElement | null {
   );
 }
 
-export function setPromptText(input: HTMLElement, prompt: string): void {
-  input.focus();
+export async function setPromptText(input: HTMLElement, prompt: string): Promise<void> {
+  const tempId = `prompt_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  input.setAttribute("data-flow-temp-prompt-id", tempId);
+  input.setAttribute("data-flow-temp-prompt-val", prompt);
 
-  if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
-    setNativeInputValue(input, prompt);
-    dispatchTextEvents(input, prompt);
-    return;
-  }
+  const donePromise = new Promise<void>((resolve) => {
+    const handler = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      if (customEvent.detail && customEvent.detail.tempId === tempId) {
+        window.removeEventListener("FLOW_AUTOMATOR_SET_TEXT_DONE", handler);
+        resolve();
+      }
+    };
+    window.addEventListener("FLOW_AUTOMATOR_SET_TEXT_DONE", handler);
+  });
 
-  dispatchPasteEvents(input, prompt);
-  dispatchTextEvents(input, prompt);
+  const script = document.createElement("script");
+  script.textContent = `
+    (async function() {
+      const tempId = "${tempId}";
+      const el = document.querySelector('[data-flow-temp-prompt-id="' + tempId + '"]');
+      if (!el) {
+        window.dispatchEvent(new CustomEvent('FLOW_AUTOMATOR_SET_TEXT_DONE', { detail: { tempId } }));
+        return;
+      }
+      const val = el.getAttribute("data-flow-temp-prompt-val") || "";
+      el.removeAttribute("data-flow-temp-prompt-val");
+      el.removeAttribute("data-flow-temp-prompt-id");
+
+      function getReactFiber(node) {
+        const key = Object.keys(node).find(k => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
+        return key ? node[key] : null;
+      }
+
+      function getSlateEditor(slateRoot) {
+        let fiber = getReactFiber(slateRoot);
+        while (fiber) {
+          try {
+            const state = fiber.memoizedState && fiber.memoizedState.memoizedState;
+            if (state && state.editor && typeof state.editor.insertText === 'function') {
+              return state.editor;
+            }
+            const props = fiber.memoizedProps;
+            if (props && props.editor && typeof props.editor.insertText === 'function') {
+              return props.editor;
+            }
+          } catch (e) {}
+          fiber = fiber.return;
+        }
+        return null;
+      }
+
+      try {
+        const slateRoot = el.getAttribute('data-slate-editor') === 'true' ? el : el.closest('[data-slate-editor="true"]');
+        if (slateRoot) {
+          const editor = getSlateEditor(slateRoot);
+          if (editor) {
+            const firstChild = editor.children && editor.children[0];
+            const firstText = firstChild && firstChild.children && firstChild.children[0];
+            const existingLen = firstText && firstText.text ? firstText.text.length : 0;
+            editor.select({
+              anchor: { path: [0, 0], offset: 0 },
+              focus: { path: [0, 0], offset: existingLen }
+            });
+            editor.deleteFragment();
+
+            for (let i = 0; i < val.length; i++) {
+              editor.insertText(val[i]);
+              await new Promise(r => setTimeout(r, Math.floor(Math.random() * (45 - 15 + 1)) + 15));
+            }
+            slateRoot.dispatchEvent(new Event('input', { bubbles: true }));
+            window.dispatchEvent(new CustomEvent('FLOW_AUTOMATOR_SET_TEXT_DONE', { detail: { tempId } }));
+            return;
+          }
+        }
+      } catch (e) {
+        console.error("Slate inject error:", e);
+      }
+
+      if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+        try {
+          const prototype = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+          const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
+          if (descriptor && descriptor.set) {
+            descriptor.set.call(el, "");
+          } else {
+            el.value = "";
+          }
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+
+          for (let i = 0; i < val.length; i++) {
+            const char = val[i];
+            const currentVal = el.value + char;
+            try {
+              const pk = Object.keys(el).find(k => k.startsWith('__reactProps$') || k.startsWith('__reactEventHandlers$'));
+              if (pk && el[pk] && typeof el[pk].onChange === 'function') {
+                el[pk].onChange({ target: { value: currentVal }, currentTarget: { value: currentVal }, type: 'change', bubbles: true });
+              }
+            } catch(e) {}
+            if (descriptor && descriptor.set) {
+              descriptor.set.call(el, currentVal);
+            } else {
+              el.value = currentVal;
+            }
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            await new Promise(r => setTimeout(r, Math.floor(Math.random() * (45 - 15 + 1)) + 15));
+          }
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          window.dispatchEvent(new CustomEvent('FLOW_AUTOMATOR_SET_TEXT_DONE', { detail: { tempId } }));
+          return;
+        } catch (e) {
+          console.error("Standard input inject error:", e);
+        }
+      }
+
+      // Fallback
+      try {
+        el.focus();
+        const sel = window.getSelection();
+        if (sel) {
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          sel.removeAllRanges();
+          sel.addRange(range);
+          document.execCommand("delete", false);
+        }
+      } catch (e) {}
+
+      for (let i = 0; i < val.length; i++) {
+        const char = val[i];
+        let inserted = false;
+        try {
+          inserted = document.execCommand("insertText", false, char);
+        } catch (e) {}
+        if (!inserted) {
+          el.textContent += char;
+        }
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        await new Promise(r => setTimeout(r, Math.floor(Math.random() * (45 - 15 + 1)) + 15));
+      }
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      window.dispatchEvent(new CustomEvent('FLOW_AUTOMATOR_SET_TEXT_DONE', { detail: { tempId } }));
+    })();
+  `;
+  document.head.appendChild(script);
+  script.remove();
+
+  await donePromise;
 }
 
 function isEditableInput(element: HTMLElement): boolean {
@@ -345,43 +482,7 @@ function findNearbyPromptButton(promptInput?: HTMLElement): HTMLElement | null {
   return null;
 }
 
-function setNativeInputValue(input: HTMLInputElement | HTMLTextAreaElement, value: string): void {
-  const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-  const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
-  descriptor?.set?.call(input, value);
-}
 
-function dispatchTextEvents(input: HTMLElement, prompt: string): void {
-  input.dispatchEvent(new Event("focus", { bubbles: true }));
-  input.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-
-  input.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: prompt }));
-  input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Process", code: "Process", keyCode: 229 }));
-  
-  input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: prompt }));
-  
-  input.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: " ", code: "Space", keyCode: 32 }));
-  input.dispatchEvent(new Event("change", { bubbles: true }));
-  
-  // Dispatch generic typing keys to ensure framework listeners trigger
-  input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "a", code: "KeyA", keyCode: 65 }));
-  input.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "a", code: "KeyA", keyCode: 65 }));
-
-  input.dispatchEvent(new Event("blur", { bubbles: true }));
-}
-
-function dispatchPasteEvents(input: HTMLElement, prompt: string): void {
-  const clipboardData = new DataTransfer();
-  clipboardData.setData("text/plain", prompt);
-
-  input.dispatchEvent(
-    new ClipboardEvent("paste", {
-      bubbles: true,
-      cancelable: true,
-      clipboardData
-    })
-  );
-}
 
 // isPossibleSubmitButton has been integrated into findNearbyPromptButton and removed.
 
