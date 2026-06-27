@@ -51,9 +51,43 @@ Second prompt.
     ]);
   });
 
-  it("rejects empty files and files without timestamps", () => {
+  it("rejects empty files", () => {
     expect(() => parseMarkdownPrompts("")).toThrow(MarkdownParseError);
-    expect(() => parseMarkdownPrompts("Just a prompt")).toThrow("No timestamp blocks found");
+  });
+
+  it("parses paragraphs when timestamps are missing", () => {
+    const result = parseMarkdownPrompts(`
+Scene one prompt description.
+
+Scene two prompt description.
+With multiple lines.
+`);
+    expect(result.prompts).toHaveLength(2);
+    expect(result.prompts[0]).toMatchObject({
+      index: 1,
+      timestamp: "001_Scene",
+      safeTimestamp: "001_Scene",
+      prompt: "Scene one prompt description."
+    });
+    expect(result.prompts[1]).toMatchObject({
+      index: 2,
+      timestamp: "002_Scene",
+      safeTimestamp: "002_Scene",
+      prompt: "Scene two prompt description.\nWith multiple lines."
+    });
+  });
+
+  it("prepends global style if provided", () => {
+    const result = parseMarkdownPrompts(`
+[00:00]
+A stickman runs.
+`, "Cinematic, 8k");
+    expect(result.prompts[0]?.prompt).toBe("Cinematic, 8k A stickman runs.");
+
+    const result2 = parseMarkdownPrompts(`
+Paragraph one.
+`, "Style");
+    expect(result2.prompts[0]?.prompt).toBe("Style Paragraph one.");
   });
 
   it("rejects empty prompt bodies", () => {
